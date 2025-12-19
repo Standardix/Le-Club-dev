@@ -11,7 +11,6 @@ YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="s
 
 # ---------------------------------------------------------
 # ORDRE FINAL DES COLONNES (strict)
-# IMPORTANT: si ton PJ change l'ordre, remplace juste cette liste.
 # ---------------------------------------------------------
 SHOPIFY_OUTPUT_COLUMNS = [
     "Handle",
@@ -67,43 +66,36 @@ SHOPIFY_OUTPUT_COLUMNS = [
 def _norm(s) -> str:
     return re.sub(r"\s+", " ", str(s or "").strip())
 
+
 def _strip_reg_for_handle(s: str) -> str:
-    """
-    For Handle only:
-    remove ®, (r), [r] etc to avoid URL issues.
-    """
+    """Handle only: remove ® and (r)/[r] to keep URL safe."""
     t = _norm(s)
-    # remove unicode registered
     t = t.replace("®", "")
-    # remove (r), [r], {r} case-insensitive
     t = re.sub(r"[\(\[\{]\s*r\s*[\)\]\}]", "", t, flags=re.IGNORECASE)
     return _norm(t)
 
+
 def _convert_r_to_registered(s: str) -> str:
-    """
-    For SEO/title rendering:
-    convert (r) or [r] to ®.
-    """
+    """Display/SEO: convert (r)/[r] to ®."""
     t = _norm(s)
     t = re.sub(r"[\(\[\{]\s*r\s*[\)\]\}]", "®", t, flags=re.IGNORECASE)
     return t
 
+
 def _words(s: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", str(s).lower())
 
+
 def _singularize_token(tok: str) -> str:
-    """
-    Very simple singularization to solve Hats vs Hat:
-    - remove trailing 's' for tokens length>=4 (hats->hat)
-    """
+    # basic: hats -> hat (only for longer tokens)
     if tok.endswith("s") and len(tok) >= 4:
         return tok[:-1]
     return tok
 
+
 def _wordset_loose(s: str) -> set[str]:
-    toks = _words(s)
-    toks = [_singularize_token(t) for t in toks]
-    return set(toks)
+    return set(_singularize_token(t) for t in _words(s))
+
 
 def _first_existing_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
     cols = {c.lower(): c for c in df.columns}
@@ -112,17 +104,16 @@ def _first_existing_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
             return cols[c.lower()]
     return None
 
+
 # ---------------------------------------------------------
-# Help data readers via openpyxl (robuste avec noms d'onglets)
+# Help data readers (openpyxl)
 # ---------------------------------------------------------
 def _load_help_wb(help_bytes: bytes):
     return openpyxl.load_workbook(io.BytesIO(help_bytes), data_only=True)
 
+
 def _read_2col_map(wb, sheet_candidates: list[str]) -> dict[str, str]:
-    """
-    Reads first 2 columns (A raw -> B standard).
-    Returns dict raw(lower)->standard
-    """
+    """Col A raw -> Col B standard"""
     sheet = None
     for name in sheet_candidates:
         if name in wb.sheetnames:
@@ -131,8 +122,8 @@ def _read_2col_map(wb, sheet_candidates: list[str]) -> dict[str, str]:
     if sheet is None:
         return {}
 
-    m = {}
-    for r in range(2, sheet.max_row + 1):  # skip header
+    m: dict[str, str] = {}
+    for r in range(2, sheet.max_row + 1):
         a = sheet.cell(row=r, column=1).value
         b = sheet.cell(row=r, column=2).value
         if a is None or b is None:
@@ -144,11 +135,13 @@ def _read_2col_map(wb, sheet_candidates: list[str]) -> dict[str, str]:
         m[ra.lower()] = rb
     return m
 
+
 def _standardize(val: str, mapping: dict[str, str]) -> str:
     s = _norm(val)
     if not s or s.lower() == "nan":
         return ""
     return mapping.get(s.lower(), s)
+
 
 def _read_list_column(wb, sheet_name: str) -> list[str]:
     if sheet_name not in wb.sheetnames:
@@ -164,12 +157,9 @@ def _read_list_column(wb, sheet_name: str) -> list[str]:
             out.append(s)
     return out
 
-def _read_category_df(wb, sheet_name: str):
-    """
-    Category sheets:
-      Col A = keywords/name
-      Col B = ID
-    """
+
+def _read_category_rows(wb, sheet_name: str):
+    """returns list[(name_keywords, id)] from columns A,B"""
     if sheet_name not in wb.sheetnames:
         return None
     ws = wb[sheet_name]
@@ -183,16 +173,13 @@ def _read_category_df(wb, sheet_name: str):
         bb = "" if b is None else str(b).strip()
         if aa and aa.lower() != "nan":
             rows.append((aa, bb))
-    if not rows:
-        return None
-    return rows  # list[(name, id)]
+    return rows or None
+
 
 def _read_brand_line_map(wb, sheet_name: str) -> dict[str, str]:
     """
-    Brand lines / SEO Description Brand Part:
-      Col A = BRAND
-      Col B = LINE
-      (if more columns exist, concatenate)
+    Col A = brand
+    Col B+ = text parts (concatenated)
     """
     if sheet_name not in wb.sheetnames:
         return {}
@@ -219,15 +206,13 @@ def _read_brand_line_map(wb, sheet_name: str) -> dict[str, str]:
             m[b.lower()] = " ".join(parts).strip()
     return m
 
+
 def _read_size_reco_map(wb) -> dict[str, str]:
-    """
-    Size Recommandation:
-      Garment -> Comment
-    """
+    """Garment -> Comment"""
     if "Size Recommandation" not in wb.sheetnames:
         return {}
     ws = wb["Size Recommandation"]
-    # find columns by header
+
     headers = {}
     for c in range(1, ws.max_column + 1):
         h = ws.cell(row=1, column=c).value
@@ -252,46 +237,42 @@ def _read_size_reco_map(wb) -> dict[str, str]:
             m[gs.lower()] = cs
     return m
 
+
 # ---------------------------------------------------------
 # Matching functions
 # ---------------------------------------------------------
-def _best_match_id(description: str, cat_rows) -> str:
+def _best_match_id(text: str, cat_rows) -> str:
     """
-    cat_rows: list[(name, id)]
-    exact match (loose singular/plural): all words of name must be in description
-    returns ID
+    Exact-match (loose singular/plural): all words in name must be in text.
+    Returns ID (col B).
     """
     if not cat_rows:
         return ""
-
-    desc_set = _wordset_loose(description)
+    tset = _wordset_loose(text)
     best_id = ""
     best_len = 0
-
     for name, cid in cat_rows:
-        name_set = _wordset_loose(name)
-        if not name_set:
-            continue
-        if name_set.issubset(desc_set):
-            if len(name_set) > best_len:
-                best_len = len(name_set)
+        nset = _wordset_loose(name)
+        if nset and nset.issubset(tset):
+            if len(nset) > best_len:
+                best_len = len(nset)
                 best_id = str(cid or "").strip()
-
-    # remove trailing .0 if Excel formatted ID as number
     best_id = re.sub(r"\.0$", "", best_id) if best_id else ""
     return best_id
 
-def _best_match_product_type(description: str, product_types: list[str]) -> str:
-    desc_set = _wordset_loose(description)
+
+def _best_match_product_type(text: str, product_types: list[str]) -> str:
+    tset = _wordset_loose(text)
     best = ""
     best_len = 0
     for pt in product_types:
-        pt_set = _wordset_loose(pt)
-        if pt_set and pt_set.issubset(desc_set):
-            if len(pt_set) > best_len:
-                best_len = len(pt_set)
+        pset = _wordset_loose(pt)
+        if pset and pset.issubset(tset):
+            if len(pset) > best_len:
+                best_len = len(pset)
                 best = pt
     return best
+
 
 # ---------------------------------------------------------
 # Parsing & formatting
@@ -300,16 +281,15 @@ def _extract_color_size_from_description(desc: str) -> tuple[str, str]:
     text = _norm(desc)
     if not text:
         return "", ""
-
     parts = re.split(r"\s*[-,/]\s*|\s*,\s*", text)
     parts = [p.strip() for p in parts if p and p.strip()]
     if len(parts) < 2:
         return "", ""
-
     last = parts[-1]
     if re.fullmatch(r"(X{0,3}S|X{0,3}L|S|M|L|XL|XXL|XXXL|\d{1,2}([./-]\d{1,2})?)", last, flags=re.IGNORECASE):
         return parts[-2], last
     return parts[-1], ""
+
 
 def _round_to_nearest_9_99(price) -> float:
     if price is None or (isinstance(price, float) and math.isnan(price)):
@@ -317,6 +297,7 @@ def _round_to_nearest_9_99(price) -> float:
     p = float(price)
     nearest10 = math.floor(p / 10.0 + 0.5) * 10.0
     return round(nearest10 - 0.01, 2)
+
 
 def _barcode_keep_zeros(x) -> str:
     if x is None:
@@ -330,23 +311,19 @@ def _barcode_keep_zeros(x) -> str:
         return s.zfill(12) if len(s) <= 12 else s
     return s
 
+
 def _hs_code_clean(x) -> str:
-    """
-    Do NOT append zeros. Only clean common Excel artifacts.
-    """
+    """Do not append zeros; only clean Excel .0 artifact."""
     if x is None:
         return ""
     s = str(x).strip()
     if s == "" or s.lower() == "nan":
         return ""
-    # remove trailing .0 only
-    s = re.sub(r"\.0$", "", s)
-    return s
+    return re.sub(r"\.0$", "", s)
+
 
 def _title_case_preserve_registered(text: str) -> str:
-    """
-    Title Case but preserve ® and keep small acronyms reasonably.
-    """
+    """Title Case while preserving ®."""
     text = _norm(text)
     if not text:
         return ""
@@ -354,22 +331,19 @@ def _title_case_preserve_registered(text: str) -> str:
     out = []
     for w in parts:
         if "®" in w:
-            # split around ® to title-case each side
             sub = w.split("®")
             sub = [p[:1].upper() + p[1:].lower() if p else "" for p in sub]
             out.append("®".join(sub))
             continue
-
         if w.isupper() and len(w) <= 4:
             out.append(w)
             continue
-
         if any(ch.isdigit() for ch in w):
             out.append(w)
             continue
-
         out.append(w[:1].upper() + w[1:].lower() if w else w)
     return " ".join(out)
+
 
 # ---------------------------------------------------------
 # Excel highlighting
@@ -397,24 +371,30 @@ def _apply_yellow_for_empty(buffer: io.BytesIO, sheet_name: str, cols_to_yellow:
     out.seek(0)
     return out
 
+
 # ---------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------
-def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_name: str, brand_choice: str = ""):
+def run_transform(
+    supplier_xlsx_bytes: bytes,
+    help_xlsx_bytes: bytes,
+    vendor_name: str,
+    brand_choice: str = "",
+):
     sup = pd.read_excel(io.BytesIO(supplier_xlsx_bytes), sheet_name=0, dtype=str).copy()
     warnings: list[dict] = []
 
     wb = _load_help_wb(help_xlsx_bytes)
 
-    # Standardization sheets (support both naming conventions)
+    # Standardization
     color_map = _read_2col_map(wb, ["Color Standardization", "Color Variable"])
     size_map = _read_2col_map(wb, ["Size Standardization", "Size Variante"])
     country_map = _read_2col_map(wb, ["Country Abbreviations", "Country of Origin"])
     gender_map = _read_2col_map(wb, ["Gender Standardization", "Gender"])
 
-    # Categories + product types
-    shopify_cat_rows = _read_category_df(wb, "Shopify Product Category")
-    google_cat_rows = _read_category_df(wb, "Google Product Category")
+    # Categories & Product types
+    shopify_cat_rows = _read_category_rows(wb, "Shopify Product Category")
+    google_cat_rows = _read_category_rows(wb, "Google Product Category")
     product_types = _read_list_column(wb, "Product Types")
 
     # Brand maps
@@ -424,12 +404,24 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
     # Size reco
     size_comment_map = _read_size_reco_map(wb)
 
-    # Supplier columns (flexible)
-    desc_col = _first_existing_col(sup, ["Description", "Product Name", "Title"])
-    product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU"])
-    color_col = _first_existing_col(sup, ["Color", "Colour"])
-    size_col = _first_existing_col(sup, ["Size"])
-    upc_col = _first_existing_col(sup, ["UPC", "UPC Code"])
+    # -------------------------
+    # Supplier columns (UPDATED)
+    # -------------------------
+    # (1) add "Display Name" as a candidate for description
+    desc_col = _first_existing_col(
+        sup,
+        ["description", "Display Name", "product name", "Title", "Product Name", "title"],
+    )
+
+    product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
+
+    # (4) add "Vendor Color" as a candidate
+    color_col = _first_existing_col(sup, ["Vendor Color", "Color", "Colour", "vendor color", "color", "colour"])
+
+    # (2)(5) add "Vendor Size1" as a candidate
+    size_col = _first_existing_col(sup, ["Vendor Size1", "Size", "vendor size1", "size"])
+
+    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "upc", "upc code"])
     origin_col = _first_existing_col(sup, ["Country Code", "Origin", "Manufacturing Country"])
     hs_col = _first_existing_col(sup, ["HS Code", "HTS Code"])
     extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
@@ -439,20 +431,23 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
     gender_col = _first_existing_col(sup, ["Gender"])
 
     if desc_col is None:
-        raise ValueError("Colonne Description / Product Name / Title introuvable dans le fichier fournisseur.")
+        raise ValueError(
+            'Aucune colonne Description trouvée. Colonnes acceptées: "description", "Display Name", "product name", "Title".'
+        )
     if msrp_col is None:
-        raise ValueError("Colonne Cad MSRP / MSRP introuvable dans le fichier fournisseur.")
+        raise ValueError('Colonne "Cad MSRP" / "MSRP" introuvable dans le fichier fournisseur.')
 
-    # Base description (keep raw for SEO; stripped for handle later)
-    sup["_description_raw"] = sup[desc_col].astype(str).fillna("").map(_norm)
-    sup["_description_seo"] = sup["_description_raw"].apply(_convert_r_to_registered)
-    sup["_description_handle"] = sup["_description_raw"].apply(_strip_reg_for_handle)
+    # Base description
+    sup["_desc_raw"] = sup[desc_col].astype(str).fillna("").map(_norm)
+    sup["_desc_seo"] = sup["_desc_raw"].apply(_convert_r_to_registered)
+    sup["_desc_handle"] = sup["_desc_raw"].apply(_strip_reg_for_handle)
 
-    # Color / Size with fallback
+    # Color / Size input (prefer vendor columns)
     sup["_color_raw"] = sup[color_col].astype(str).fillna("").map(_norm) if color_col else ""
     sup["_size_raw"] = sup[size_col].astype(str).fillna("").map(_norm) if size_col else ""
 
-    parsed = sup["_description_raw"].apply(_extract_color_size_from_description)
+    # Fallback parse from description if missing
+    parsed = sup["_desc_raw"].apply(_extract_color_size_from_description)
     sup["_color_fb"] = parsed.map(lambda t: t[0])
     sup["_size_fb"] = parsed.map(lambda t: t[1])
 
@@ -462,11 +457,11 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
     sup["_size_in"] = sup["_size_raw"]
     sup.loc[sup["_size_in"].eq(""), "_size_in"] = sup["_size_fb"]
 
-    # Standardized color/size (col B output)
+    # Standardize -> MUST output col B (your mapping)
     sup["_color_std"] = sup["_color_in"].apply(lambda x: _standardize(x, color_map))
     sup["_size_std"] = sup["_size_in"].apply(lambda x: _standardize(x, size_map))
 
-    # Gender
+    # Gender (standardize if possible)
     sup["_gender_raw"] = sup[gender_col].astype(str).fillna("").map(_norm) if gender_col else ""
     sup["_gender_std"] = sup["_gender_raw"].apply(lambda x: _standardize(x, gender_map)) if gender_map else sup["_gender_raw"]
 
@@ -474,15 +469,18 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
     sup["_vendor"] = vendor_name
     sup["_brand_choice"] = _norm(brand_choice)
 
-    # Title = Description + Color (standardized color)
-    sup["_title"] = (sup["_description_raw"] + " " + sup["_color_std"]).str.strip()
+    # Title (for Shopify): Description + Color (standardized)
+    sup["_title"] = (sup["_desc_raw"] + " " + sup["_color_std"]).str.strip()
 
-    # Handle = Vendor + Gender + Description + Color (WITHOUT ®)
+    # -------------------------
+    # (1) Handle rule (UPDATED)
+    # Vendor + Gender + Description + Color, hyphens (slugify)
+    # -------------------------
     def _make_handle(r):
         parts = [
             _strip_reg_for_handle(r["_vendor"]),
             _strip_reg_for_handle(r["_gender_std"]),
-            r["_description_handle"],
+            r["_desc_handle"],
             _strip_reg_for_handle(r["_color_std"]),
         ]
         parts = [p for p in parts if p and str(p).strip()]
@@ -490,8 +488,8 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
 
     sup["_handle"] = sup.apply(_make_handle, axis=1)
 
-    # Custom Product Type (loose singular/plural match)
-    sup["_product_type"] = sup["_title"].apply(lambda d: _best_match_product_type(d, product_types))
+    # Custom Product Type (loose singular/plural)
+    sup["_product_type"] = sup["_title"].apply(lambda t: _best_match_product_type(t, product_types))
 
     # Tags
     def _make_tags(r):
@@ -509,12 +507,11 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
         g = str(r["_gender_std"]).lower()
         if "men" in g and "women" in g:
             tags.extend(["Men", "Women"])
-
         return ", ".join([t for t in tags if t])
 
     sup["_tags"] = sup.apply(_make_tags, axis=1)
 
-    # SKU
+    # SKU: external id else product code else fallback
     sup["_external_id"] = sup[extid_col].astype(str).fillna("").map(_norm) if extid_col else ""
     sup["_product_code"] = sup[product_col].astype(str).fillna("").map(_norm) if product_col else ""
 
@@ -531,14 +528,14 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
     # Barcode
     sup["_barcode"] = sup[upc_col].apply(_barcode_keep_zeros) if upc_col else ""
 
-    # Country of origin (standardize)
+    # Country (standardize)
     sup["_origin_raw"] = sup[origin_col].astype(str).fillna("").map(_norm) if origin_col else ""
     sup["_origin_std"] = sup["_origin_raw"].apply(lambda x: _standardize(x, country_map))
 
-    # HS Code (no extra zeros)
+    # HS Code (3)
     sup["_hs"] = sup[hs_col].apply(_hs_code_clean) if hs_col else ""
 
-    # Grams
+    # Grams (2/5 - keep)
     sup["_grams"] = sup[grams_col].astype(str).fillna("").map(_norm) if grams_col else ""
 
     # Price
@@ -551,51 +548,58 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
     # Cost
     sup["_cost"] = sup[landed_col].astype(str).fillna("").map(_norm) if landed_col else ""
 
-    # Size comment based on brand choice or vendor (prefer brand if selected)
+    # Size comment: prefer brand else vendor
     def _size_comment(r):
         key = (r["_brand_choice"] or r["_vendor"]).strip().lower()
         return size_comment_map.get(key, "")
 
     sup["_size_comment"] = sup.apply(_size_comment, axis=1)
 
-    # Categories (IDs) using description/title keywords
-    sup["_shopify_cat_id"] = sup["_title"].apply(lambda d: _best_match_id(d, shopify_cat_rows))
-    sup["_google_cat_id"] = sup["_title"].apply(lambda d: _best_match_id(d, google_cat_rows))
+    # Categories
+    sup["_shopify_cat_id"] = sup["_title"].apply(lambda t: _best_match_id(t, shopify_cat_rows))
+    sup["_google_cat_id"] = sup["_title"].apply(lambda t: _best_match_id(t, google_cat_rows))
 
-    # theme.siblings
-    sup["_siblings"] = sup.apply(lambda r: slugify(f"{r['_vendor']} {r['_description_handle']}"), axis=1)
+    # Siblings
+    sup["_siblings"] = sup.apply(lambda r: slugify(f"{r['_vendor']} {r['_desc_handle']}"), axis=1)
 
-    # SEO Title requirements:
-    # - Title Case
-    # - keep ®
-    # - space-hyphen-space before Color
+    # SEO Title (same rules you had)
     def _seo_title(r):
-        main = f"{r['_vendor']} {r['_gender_std']} {r['_description_seo']}".strip()
+        main = f"{r['_vendor']} {r['_gender_std']} {r['_desc_seo']}".strip()
         main = _title_case_preserve_registered(main)
         color = _title_case_preserve_registered(r["_color_std"])
-        if color:
-            return f"{main} - {color}".strip()
-        return main
+        return f"{main} - {color}".strip() if color else main
 
     sup["_seo_title"] = sup.apply(_seo_title, axis=1)
 
-    # SEO Description:
-    # replace trailing "products." with brand part line if brand exists else keep "products."
+    # (3) SEO Description rule (UPDATED)
+    # Prefix stays identical; we ONLY replace the "[products.]" part if brand exists in SEO Description Brand Part.
+    # Vendor name must be present at the end.
     def _seo_desc(r):
-        base = f"Shop the {r['_seo_title']} with free worldwide shipping, and 30-day returns on leclub.cc. Discover "
+        prefix = (
+            f"Shop the {r['_seo_title']} with free worldwide shipping, and 30-day returns on leclub.cc. Discover "
+        )
+
         bkey = (r["_brand_choice"] or "").strip().lower()
         if bkey and bkey in brand_desc_map:
-            return base + brand_desc_map[bkey].rstrip(".") + "."
+            middle = brand_desc_map[bkey].strip()
         else:
-            return base + "products."
+            middle = "products."
+
+        # Ensure vendor at end
+        vend = r["_vendor"].strip()
+        # avoid double punctuation
+        middle = middle.rstrip()
+        if not middle.endswith("."):
+            middle = middle + "."
+        return f"{prefix}{middle} {vend}."
+
     sup["_seo_desc"] = sup.apply(_seo_desc, axis=1)
 
-    # Behind the brand (Brand lines)
+    # (8) behind the brand
     def _behind_brand(r):
         bkey = (r["_brand_choice"] or "").strip().lower()
-        if bkey and bkey in brand_lines_map:
-            return brand_lines_map[bkey]
-        return ""
+        return brand_lines_map.get(bkey, "") if bkey else ""
+
     sup["_behind_the_brand"] = sup.apply(_behind_brand, axis=1)
 
     # ---------------------------------------------------------
@@ -606,7 +610,7 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
     out["Handle"] = sup["_handle"]
     out["Command"] = "NEW"
     out["Title"] = sup["_title"]
-    out["Body (HTML)"] = ""  # leave empty (yellow if empty)
+    out["Body (HTML)"] = ""
     out["Vendor"] = sup["_vendor"]
     out["Custom Product Type"] = sup["_product_type"]
     out["Tags"] = sup["_tags"]
@@ -615,7 +619,7 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
     out["Published Scope"] = "global"
 
     out["Option1 Name"] = "Size"
-    out["Option1 Value"] = sup["_size_std"]
+    out["Option1 Value"] = sup["_size_std"]  # (2)(5)
 
     out["Variant SKU"] = sup["_variant_sku"]
     out["Variant Barcode"] = sup["_barcode"]
@@ -644,15 +648,18 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
     out["Metafield: my_fields.size_comment [single_line_text_field]"] = sup["_size_comment"]
     out["Metafield: my_fields.gender [single_line_text_field]"] = sup["_gender_std"]
 
-    # (9) colour metafields should be standardized (we already use _color_std which is column 2)
+    # (4) color metafields must be standardized
     out["Metafield: my_fields.colour [single_line_text_field]"] = sup["_color_std"]
     out["Metafield: mm-google-shopping.color"] = sup["_color_std"]
 
+    # (5) size metafield must be standardized
     out["Variant Metafield: mm-google-shopping.size"] = sup["_size_std"]
+
     out["Metafield: mm-google-shopping.size_system"] = "US"
     out["Metafield: mm-google-shopping.condition"] = "new"
     out["Metafield: mm-google-shopping.google_product_category"] = sup["_google_cat_id"]
     out["Metafield: mm-google-shopping.gender"] = sup["_gender_std"]
+
     out["Variant Metafield: mm-google-shopping.mpn"] = sup["_variant_sku"]
     out["Variant Metafield: mm-google-shopping.gtin"] = sup["_barcode"]
 
@@ -663,14 +670,9 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
     out["Inventory Available: Boutique"] = 0
     out["Inventory Available: Le Club"] = 0
 
-    # Ensure strict order
     out = out.reindex(columns=SHOPIFY_OUTPUT_COLUMNS)
 
-    # ---------------------------------------------------------
-    # Yellow rules (updated)
-    # - Added: Variant Grams
-    # - Added: google_product_category + Category: ID
-    # ---------------------------------------------------------
+    # Yellow rules (kept from your spec)
     yellow_if_empty_cols = [
         "Handle",
         "Title",
@@ -679,7 +681,7 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
         "Option1 Name",
         "Option1 Value",
         "Variant Price",
-        "Variant Grams",  # (4)
+        "Variant Grams",
         "SEO Title",
         "SEO Description",
         "Metafield: my_fields.size_comment [single_line_text_field]",
@@ -687,8 +689,8 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
         "Metafield: my_fields.colour [single_line_text_field]",
         "Metafield: mm-google-shopping.color",
         "Variant Metafield: mm-google-shopping.size",
-        "Metafield: mm-google-shopping.google_product_category",  # (10)
-        "Category: ID",  # (11)
+        "Metafield: mm-google-shopping.google_product_category",
+        "Category: ID",
     ]
 
     # Export
@@ -698,5 +700,4 @@ def run_transform(supplier_xlsx_bytes: bytes, help_xlsx_bytes: bytes, vendor_nam
         pd.DataFrame(warnings).to_excel(writer, index=False, sheet_name="warnings")
 
     buffer = _apply_yellow_for_empty(buffer, "shopify_import", yellow_if_empty_cols)
-
     return buffer.getvalue(), pd.DataFrame(warnings)
