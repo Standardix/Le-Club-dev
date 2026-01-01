@@ -335,9 +335,6 @@ def _title_case_preserve_registered(text: str) -> str:
             sub = [p[:1].upper() + p[1:].lower() if p else "" for p in sub]
             out.append("®".join(sub))
             continue
-        if w.isupper() and len(w) <= 4:
-            out.append(w)
-            continue
         if any(ch.isdigit() for ch in w):
             out.append(w)
             continue
@@ -473,22 +470,14 @@ def run_transform(
     sup["_vendor"] = vendor_name
     sup["_brand_choice"] = _norm(brand_choice)
 
-    # Title (for Shopify): "Gender's Description - Color" (Color is NON-standardized, as in input)
-    def _gender_display(g: str) -> str:
-        gg = _norm(g)
-        if gg.lower() in ("men", "women"):
-            gg = f"{gg}'s"
-        return _title_case_preserve_registered(gg)
-
-    sup["_gender_disp"] = sup["_gender_std"].astype(str).fillna("").map(_gender_display)
-    sup["_desc_title"] = sup["_desc_seo"].astype(str).fillna("").map(_title_case_preserve_registered)
-
-    # Apply title-case to gender+description only. Keep color exactly as provided (non-standardized).
-    sup["_title"] = (sup["_gender_disp"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
+    # Title (for Shopify): Description + Color (standardized)
+    sup["_title"] = (sup["_desc_raw"] + " " + sup["_color_std"]).str.strip()
+    # Color: NON-standardized, but Title Case
     sup.loc[sup["_color_in"].astype(str).str.strip().ne(""), "_title"] = (
-        sup["_title"].str.strip() + " - " + sup["_color_in"].astype(str).str.strip()
+        sup["_title"].str.strip()
+        + " - "
+        + sup["_color_in"].astype(str).fillna("").map(_title_case_preserve_registered)
     )
-
 
     # -------------------------
     # (1) Handle rule (UPDATED)
@@ -499,7 +488,7 @@ def run_transform(
             _strip_reg_for_handle(r["_vendor"]),
             _strip_reg_for_handle(r["_gender_std"]),
             r["_desc_handle"],
-            _strip_reg_for_handle(r["_color_in"]),
+            _strip_reg_for_handle(r["_color_std"]),
         ]
         parts = [p for p in parts if p and str(p).strip()]
         return slugify(" ".join(parts))
@@ -580,30 +569,35 @@ def run_transform(
     # Siblings
     sup["_siblings"] = sup.apply(lambda r: slugify(f"{r['_vendor']} {r['_desc_handle']}"), axis=1)
 
-    # SEO Title (same rules you had)
+    # SEO Title
+    # - Adds "'s" for Men/Women
+    # - Title Case (strict) for every word
     def _seo_title(r):
-        main = f"{r['_vendor']} {r['_gender_std']} {r['_desc_seo']}".strip()
+        g = _norm(r["_gender_std"])
+        if g.lower() in ("men", "women"):
+            g = f"{g}'s"
+        main = f"{r['_vendor']} {g} {r['_desc_seo']}".strip()
         main = _title_case_preserve_registered(main)
         color = _title_case_preserve_registered(r["_color_std"])
         return f"{main} - {color}".strip() if color else main
 
     sup["_seo_title"] = sup.apply(_seo_title, axis=1)
 
-    # (3) SEO Description rule (UPDATED)
+    # SEO Description
+    # a) If brand NOT in "SEO Description Brand Part": "Discover [Brand Name] products."
+    # b) If brand IS in that sheet: "Discover [Brand Name] " + Column B text
     def _seo_desc(r):
-        prefix = f"Shop the {r['_seo_title']} with free worldwide shipping, and 30-day returns on leclub.cc. Discover "
+        prefix = f"Shop the {r['_seo_title']} with free worldwide shipping, and 30-day returns on leclub.cc. "
 
-        bkey = (r["_brand_choice"] or "").strip().lower()
+        brand_name = _norm(r["_brand_choice"] or r["_vendor"])
+        brand_name_disp = _title_case_preserve_registered(brand_name)
+
+        bkey = brand_name.strip().lower()
         if bkey and bkey in brand_desc_map:
-            middle = brand_desc_map[bkey].strip()
+            part = _norm(brand_desc_map[bkey]).rstrip().rstrip(".")
+            return f"{prefix}Discover {brand_name_disp} {part}."
         else:
-            middle = "products."
-
-        vend = r["_vendor"].strip()
-        middle = middle.rstrip()
-        if not middle.endswith("."):
-            middle = middle + "."
-        return f"{prefix}{middle} {vend}."
+            return f"{prefix}Discover {brand_name_disp} products."
 
     sup["_seo_desc"] = sup.apply(_seo_desc, axis=1)
 
@@ -691,6 +685,8 @@ def run_transform(
         "Option1 Value",
         "Variant Price",
         "Variant Grams",
+        "Variant Country of Origin",
+        "Variant HS Code",
         "SEO Title",
         "SEO Description",
         "Metafield: my_fields.size_comment [single_line_text_field]",
