@@ -473,8 +473,22 @@ def run_transform(
     sup["_vendor"] = vendor_name
     sup["_brand_choice"] = _norm(brand_choice)
 
-    # Title (for Shopify): Description + Color (standardized)
-    sup["_title"] = (sup["_desc_raw"] + " " + sup["_color_std"]).str.strip()
+    # Title (for Shopify): "Gender's Description - Color" (Color is NON-standardized, as in input)
+    def _gender_display(g: str) -> str:
+        gg = _norm(g)
+        if gg.lower() in ("men", "women"):
+            gg = f"{gg}'s"
+        return _title_case_preserve_registered(gg)
+
+    sup["_gender_disp"] = sup["_gender_std"].astype(str).fillna("").map(_gender_display)
+    sup["_desc_title"] = sup["_desc_seo"].astype(str).fillna("").map(_title_case_preserve_registered)
+
+    # Apply title-case to gender+description only. Keep color exactly as provided (non-standardized).
+    sup["_title"] = (sup["_gender_disp"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
+    sup.loc[sup["_color_in"].astype(str).str.strip().ne(""), "_title"] = (
+        sup["_title"].str.strip() + " - " + sup["_color_in"].astype(str).str.strip()
+    )
+
 
     # -------------------------
     # (1) Handle rule (UPDATED)
@@ -485,7 +499,7 @@ def run_transform(
             _strip_reg_for_handle(r["_vendor"]),
             _strip_reg_for_handle(r["_gender_std"]),
             r["_desc_handle"],
-            _strip_reg_for_handle(r["_color_std"]),
+            _strip_reg_for_handle(r["_color_in"]),
         ]
         parts = [p for p in parts if p and str(p).strip()]
         return slugify(" ".join(parts))
