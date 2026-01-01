@@ -434,9 +434,11 @@ def run_transform(
         raise ValueError(
             'Colonne Description introuvable dans le fichier fournisseur. Les colonnes acceptées pour ce champs sont les suivantes: Description, Style, Style Name, Product Name, Title, Display Name, Online Display Name.'
         )
+        
     if msrp_col is None:
-        raise ValueError('Colonne MSRP introuvable dans le fichier fournisseur. Les colonnes acceptées pour ce champs sont les suivantes: Retail Price (CAD), Cad MSRP, MSRP.'
-
+    raise ValueError(
+        "Colonne MSRP introuvable dans le fichier fournisseur. Les colonnes acceptées pour ce champs sont les suivantes: Retail Price (CAD), Cad MSRP, MSRP."
+    )
                          
     # Base description
     sup["_desc_raw"] = sup[desc_col].astype(str).fillna("").map(_norm)
