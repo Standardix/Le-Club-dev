@@ -37,7 +37,14 @@ st.markdown(
 st.title("Générateur de fichier Shopify (Pilote)")
 
 SUPPLIERS = {
-    "Fournisseur ABC": run_abc,
+    "Balmoral": run_abc,
+    "Bandit": run_abc,
+    "Café du Cycliste": run_abc,
+    "Ciele": run_abc,
+    "District Vision": run_abc,
+    "Fingerscrossed": run_abc,
+    "MAAP": run_abc,
+    "Pas Normal Studios": run_abc,
     "Tracksmith": run_abc,
 }
 
