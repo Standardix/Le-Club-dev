@@ -416,7 +416,7 @@ def run_transform(
     product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
 
     # (4) add "Vendor Color" as a candidate
-    color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code, "color code"])
+    color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code"])
 
     # (2)(5) add "Vendor Size1" as a candidate
     size_col = _first_existing_col(sup, ["Size", "size", "Vendor Size1", "vendor size1"])
@@ -425,7 +425,7 @@ def run_transform(
     origin_col = _first_existing_col(sup, ["Country Code", "Origin", "Manufacturing Country", "COO", "country code", "origin", "manufacturing country", "coo"])
     hs_col = _first_existing_col(sup, ["HS Code", "HTS Code"])
     extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
-    msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)])
+    msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)"])
     landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
     grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight"])
     gender_col = _first_existing_col(sup, ["Gender", "gender", "Genre", "genre", "Sex", "sex", "Sexe", "Sexe"])
@@ -437,6 +437,7 @@ def run_transform(
     if msrp_col is None:
         raise ValueError('Colonne MSRP introuvable dans le fichier fournisseur. Les colonnes acceptées pour ce champs sont les suivantes: Retail Price (CAD), Cad MSRP, MSRP.'
 
+                         
     # Base description
     sup["_desc_raw"] = sup[desc_col].astype(str).fillna("").map(_norm)
     sup["_desc_seo"] = sup["_desc_raw"].apply(_convert_r_to_registered)
