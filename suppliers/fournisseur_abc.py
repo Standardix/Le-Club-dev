@@ -434,12 +434,13 @@ def run_transform(
         raise ValueError(
             'Colonne Description introuvable dans le fichier fournisseur. Les colonnes acceptées pour ce champs sont les suivantes: Description, Style, Style Name, Product Name, Title, Display Name, Online Display Name.'
         )
-        
+
+    # ✅ FIX: indentation (this was causing the IndentationError)
     if msrp_col is None:
-    raise ValueError(
-        "Colonne MSRP introuvable dans le fichier fournisseur. Les colonnes acceptées pour ce champs sont les suivantes: Retail Price (CAD), Cad MSRP, MSRP."
-    )
-                         
+        raise ValueError(
+            "Colonne MSRP introuvable dans le fichier fournisseur. Les colonnes acceptées pour ce champs sont les suivantes: Retail Price (CAD), Cad MSRP, MSRP."
+        )
+
     # Base description
     sup["_desc_raw"] = sup[desc_col].astype(str).fillna("").map(_norm)
     sup["_desc_seo"] = sup["_desc_raw"].apply(_convert_r_to_registered)
@@ -575,12 +576,8 @@ def run_transform(
     sup["_seo_title"] = sup.apply(_seo_title, axis=1)
 
     # (3) SEO Description rule (UPDATED)
-    # Prefix stays identical; we ONLY replace the "[products.]" part if brand exists in SEO Description Brand Part.
-    # Vendor name must be present at the end.
     def _seo_desc(r):
-        prefix = (
-            f"Shop the {r['_seo_title']} with free worldwide shipping, and 30-day returns on leclub.cc. Discover "
-        )
+        prefix = f"Shop the {r['_seo_title']} with free worldwide shipping, and 30-day returns on leclub.cc. Discover "
 
         bkey = (r["_brand_choice"] or "").strip().lower()
         if bkey and bkey in brand_desc_map:
@@ -588,9 +585,7 @@ def run_transform(
         else:
             middle = "products."
 
-        # Ensure vendor at end
         vend = r["_vendor"].strip()
-        # avoid double punctuation
         middle = middle.rstrip()
         if not middle.endswith("."):
             middle = middle + "."
@@ -622,7 +617,7 @@ def run_transform(
     out["Published Scope"] = "global"
 
     out["Option1 Name"] = "Size"
-    out["Option1 Value"] = sup["_size_std"]  # (2)(5)
+    out["Option1 Value"] = sup["_size_std"]
 
     out["Variant SKU"] = sup["_variant_sku"]
     out["Variant Barcode"] = sup["_barcode"]
@@ -651,11 +646,9 @@ def run_transform(
     out["Metafield: my_fields.size_comment [single_line_text_field]"] = sup["_size_comment"]
     out["Metafield: my_fields.gender [single_line_text_field]"] = sup["_gender_std"]
 
-    # (4) color metafields must be standardized
     out["Metafield: my_fields.colour [single_line_text_field]"] = sup["_color_std"]
     out["Metafield: mm-google-shopping.color"] = sup["_color_std"]
 
-    # (5) size metafield must be standardized
     out["Variant Metafield: mm-google-shopping.size"] = sup["_size_std"]
 
     out["Metafield: mm-google-shopping.size_system"] = "US"
@@ -675,7 +668,6 @@ def run_transform(
 
     out = out.reindex(columns=SHOPIFY_OUTPUT_COLUMNS)
 
-    # Yellow rules (kept from your spec)
     yellow_if_empty_cols = [
         "Handle",
         "Title",
@@ -696,7 +688,6 @@ def run_transform(
         "Category: ID",
     ]
 
-    # Export
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         out.to_excel(writer, index=False, sheet_name="shopify_import")
