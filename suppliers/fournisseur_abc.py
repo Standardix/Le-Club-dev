@@ -308,11 +308,40 @@ def _best_match_id(text: str, cat_rows) -> str:
     """
     Exact-match (loose singular/plural): all words in name must be in text.
     Returns ID (col B).
-    Adds fallback for common abbreviations/synonyms:
-    - If text contains "long sleeve" but no specific garment, tries "long sleeve tshirt" then "long sleeve jersey".
+
+    Special rule:
+    - If text contains "long sleeve" but no specific garment match is found,
+      ALWAYS try "long sleeve jersey" (never tshirt).
     """
     if not cat_rows:
         return ""
+
+    def _match(t: str) -> str:
+        tset = _wordset_loose(t)
+        best_id = ""
+        best_len = 0
+        for name, cid in cat_rows:
+            nset = _wordset_loose(name)
+            if nset and nset.issubset(tset):
+                if len(nset) > best_len:
+                    best_len = len(nset)
+                    best_id = str(cid or "").strip()
+        best_id = re.sub(r"\.0$", "", best_id) if best_id else ""
+        return best_id
+
+    # 1) normal match
+    got = _match(text)
+    if got:
+        return got
+
+    # 2) LONG SLEEVE fallback -> ALWAYS Jersey
+    w = _wordset_loose(text)
+    if {"long", "sleeve"}.issubset(w):
+        got = _match(f"{text} jersey")
+        if got:
+            return got
+
+    return ""
 
     def _match(t: str) -> str:
         tset = _wordset_loose(t)
@@ -349,7 +378,10 @@ def _best_match_id(text: str, cat_rows) -> str:
 def _best_match_product_type(text: str, product_types: list[str]) -> str:
     """
     Match product type by word-subset (loose singular/plural).
-    Adds fallback for "long sleeve" when garment is not specified.
+
+    Special rule:
+    - If text contains "long sleeve" but no specific garment match is found,
+      ALWAYS try "long sleeve jersey" (never tshirt).
     """
     def _match(t: str) -> str:
         tset = _wordset_loose(t)
@@ -368,12 +400,9 @@ def _best_match_product_type(text: str, product_types: list[str]) -> str:
     if got:
         return got
 
-    # 2) LONG SLEEVE fallback
+    # 2) LONG SLEEVE fallback -> ALWAYS Jersey
     w = _wordset_loose(text)
     if {"long", "sleeve"}.issubset(w):
-        got = _match(f"{text} tshirt")
-        if got:
-            return got
         got = _match(f"{text} jersey")
         if got:
             return got
