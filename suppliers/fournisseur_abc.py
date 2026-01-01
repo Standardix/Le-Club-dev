@@ -410,32 +410,32 @@ def run_transform(
     # (1) add "Display Name" as a candidate for description
     desc_col = _first_existing_col(
         sup,
-        ["description", "Display Name", "product name", "Title", "Product Name", "title"],
+        ["description", "Description", "Product Name", "product name", "Title", "title", "Style", "style", "Style Name", "style name", "Display Name", "display name", "Online Display Name", "online display name"],
     )
 
     product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
 
     # (4) add "Vendor Color" as a candidate
-    color_col = _first_existing_col(sup, ["Vendor Color", "Color", "Colour", "vendor color", "color", "colour"])
+    color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code, "color code"])
 
     # (2)(5) add "Vendor Size1" as a candidate
-    size_col = _first_existing_col(sup, ["Vendor Size1", "Size", "vendor size1", "size"])
+    size_col = _first_existing_col(sup, ["Size", "size", "Vendor Size1", "vendor size1"])
 
     upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "upc", "upc code"])
-    origin_col = _first_existing_col(sup, ["Country Code", "Origin", "Manufacturing Country"])
+    origin_col = _first_existing_col(sup, ["Country Code", "Origin", "Manufacturing Country", "COO", "country code", "origin", "manufacturing country", "coo"])
     hs_col = _first_existing_col(sup, ["HS Code", "HTS Code"])
     extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
-    msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP"])
-    landed_col = _first_existing_col(sup, ["Landed"])
+    msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)])
+    landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
     grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight"])
-    gender_col = _first_existing_col(sup, ["Gender"])
+    gender_col = _first_existing_col(sup, ["Gender", "gender", "Genre", "genre", "Sex", "sex", "Sexe", "Sexe"])
 
     if desc_col is None:
         raise ValueError(
-            'Aucune colonne Description trouvée. Colonnes acceptées: "description", "Display Name", "product name", "Title".'
+            'Colonne Description introuvable dans le fichier fournisseur. Les colonnes acceptées pour ce champs sont les suivantes: Description, Style, Style Name, Product Name, Title, Display Name, Online Display Name.'
         )
     if msrp_col is None:
-        raise ValueError('Colonne "Cad MSRP" / "MSRP" introuvable dans le fichier fournisseur.')
+        raise ValueError('Colonne MSRP introuvable dans le fichier fournisseur. Les colonnes acceptées pour ce champs sont les suivantes: Retail Price (CAD), Cad MSRP, MSRP.'
 
     # Base description
     sup["_desc_raw"] = sup[desc_col].astype(str).fillna("").map(_norm)
