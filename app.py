@@ -38,6 +38,7 @@ st.title("Générateur de fichier Shopify (Pilote)")
 
 SUPPLIERS = {
     "Fournisseur ABC": run_abc,
+    "Tracksmith": run_abc,
 }
 
 st.markdown("### 1️⃣ Sélection du fournisseur")
