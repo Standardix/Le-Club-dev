@@ -214,12 +214,22 @@ def _read_list_column(wb, sheet_name: str) -> list[str]:
 
 
 def _read_category_rows(wb, sheet_name: str):
-    """returns list[(name_keywords, id)] from columns A,B"""
+    """returns list[(name_keywords, id)] from columns A,B. Handles sheets with or without headers."""
     if sheet_name not in wb.sheetnames:
         return None
     ws = wb[sheet_name]
+
+    # Detect header row (light heuristic)
+    a1 = ws.cell(row=1, column=1).value
+    b1 = ws.cell(row=1, column=2).value
+    start_row = 1
+    if isinstance(a1, str) and a1.strip().lower() in {"name", "keyword", "category", "product category"}:
+        start_row = 2
+    if isinstance(b1, str) and b1.strip().lower() in {"id", "category id"}:
+        start_row = 2
+
     rows = []
-    for r in range(2, ws.max_row + 1):
+    for r in range(start_row, ws.max_row + 1):
         a = ws.cell(row=r, column=1).value
         b = ws.cell(row=r, column=2).value
         if a is None:
@@ -298,33 +308,77 @@ def _best_match_id(text: str, cat_rows) -> str:
     """
     Exact-match (loose singular/plural): all words in name must be in text.
     Returns ID (col B).
+    Adds fallback for common abbreviations/synonyms:
+    - If text contains "long sleeve" but no specific garment, tries "long sleeve tshirt" then "long sleeve jersey".
     """
     if not cat_rows:
         return ""
-    tset = _wordset_loose(text)
-    best_id = ""
-    best_len = 0
-    for name, cid in cat_rows:
-        nset = _wordset_loose(name)
-        if nset and nset.issubset(tset):
-            if len(nset) > best_len:
-                best_len = len(nset)
-                best_id = str(cid or "").strip()
-    best_id = re.sub(r"\.0$", "", best_id) if best_id else ""
-    return best_id
+
+    def _match(t: str) -> str:
+        tset = _wordset_loose(t)
+        best_id = ""
+        best_len = 0
+        for name, cid in cat_rows:
+            nset = _wordset_loose(name)
+            if nset and nset.issubset(tset):
+                if len(nset) > best_len:
+                    best_len = len(nset)
+                    best_id = str(cid or "").strip()
+        best_id = re.sub(r"\.0$", "", best_id) if best_id else ""
+        return best_id
+
+    # 1) normal match
+    got = _match(text)
+    if got:
+        return got
+
+    # 2) LONG SLEEVE fallback: if only "long sleeve" appears, we try common garment types
+    w = _wordset_loose(text)
+    if {"long", "sleeve"}.issubset(w):
+        # Prefer T-Shirt when no further hint is present
+        got = _match(f"{text} tshirt")
+        if got:
+            return got
+        got = _match(f"{text} jersey")
+        if got:
+            return got
+
+    return ""
 
 
 def _best_match_product_type(text: str, product_types: list[str]) -> str:
-    tset = _wordset_loose(text)
-    best = ""
-    best_len = 0
-    for pt in product_types:
-        pset = _wordset_loose(pt)
-        if pset and pset.issubset(tset):
-            if len(pset) > best_len:
-                best_len = len(pset)
-                best = pt
-    return best
+    """
+    Match product type by word-subset (loose singular/plural).
+    Adds fallback for "long sleeve" when garment is not specified.
+    """
+    def _match(t: str) -> str:
+        tset = _wordset_loose(t)
+        best = ""
+        best_len = 0
+        for pt in product_types:
+            pset = _wordset_loose(pt)
+            if pset and pset.issubset(tset):
+                if len(pset) > best_len:
+                    best_len = len(pset)
+                    best = pt
+        return best
+
+    # 1) normal match
+    got = _match(text)
+    if got:
+        return got
+
+    # 2) LONG SLEEVE fallback
+    w = _wordset_loose(text)
+    if {"long", "sleeve"}.issubset(w):
+        got = _match(f"{text} tshirt")
+        if got:
+            return got
+        got = _match(f"{text} jersey")
+        if got:
+            return got
+
+    return ""
 
 
 # ---------------------------------------------------------
