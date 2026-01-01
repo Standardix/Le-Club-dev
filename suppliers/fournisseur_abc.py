@@ -82,8 +82,27 @@ def _convert_r_to_registered(s: str) -> str:
     return t
 
 
+def _normalize_match_text(s: str) -> str:
+    """
+    Normalization used for category/product type matching:
+    - tee -> t-shirt -> tshirt
+    """
+    t = str(s or "")
+    t = t.replace("®", "")
+    t = t.lower()
+
+    t = re.sub(r"\bt\s*[- ]\s*shirt\b", "tshirt", t)
+    t = re.sub(r"\btshirt\b", "tshirt", t)
+
+    t = re.sub(r"\btee\b", "tshirt", t)
+    t = re.sub(r"\btees\b", "tshirt", t)
+
+    t = re.sub(r"\blong\s*[- ]\s*sleeve\b", "long sleeve", t)
+    return t
+
 def _words(s: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", str(s).lower())
+    t = _normalize_match_text(s)
+    return re.findall(r"[a-z0-9]+", t)
 
 
 def _singularize_token(tok: str) -> str:
@@ -159,12 +178,18 @@ def _read_list_column(wb, sheet_name: str) -> list[str]:
 
 
 def _read_category_rows(wb, sheet_name: str):
-    """returns list[(name_keywords, id)] from columns A,B"""
+    """returns list[(name_keywords, id)] from columns A,B. Handles sheets with or without headers."""
     if sheet_name not in wb.sheetnames:
         return None
     ws = wb[sheet_name]
+
+    a1 = ws.cell(row=1, column=1).value
+    start_row = 1
+    if isinstance(a1, str) and a1.strip().lower() in {"name", "keyword", "category", "product category"}:
+        start_row = 2
+
     rows = []
-    for r in range(2, ws.max_row + 1):
+    for r in range(start_row, ws.max_row + 1):
         a = ws.cell(row=r, column=1).value
         b = ws.cell(row=r, column=2).value
         if a is None:
@@ -323,22 +348,36 @@ def _hs_code_clean(x) -> str:
 
 
 def _title_case_preserve_registered(text: str) -> str:
-    """Title Case while preserving ®."""
+    """
+    Strict Title Case while preserving ®.
+    - Title-cases each space-separated token
+    - Also title-cases sub-tokens split by "/" and "-"
+    - Keeps tokens containing digits as-is
+    """
     text = _norm(text)
     if not text:
         return ""
+
+    def _tc_token(tok: str) -> str:
+        if not tok:
+            return tok
+        if any(ch.isdigit() for ch in tok):
+            return tok
+        if "®" in tok:
+            sub = tok.split("®")
+            sub = [(_tc_token(s) if s else "") for s in sub]
+            return "®".join(sub)
+
+        for sep in ["/", "-"]:
+            if sep in tok:
+                parts = tok.split(sep)
+                parts = [(_tc_token(p) if p else "") for p in parts]
+                return sep.join(parts)
+
+        return tok[:1].upper() + tok[1:].lower()
+
     parts = text.split(" ")
-    out = []
-    for w in parts:
-        if "®" in w:
-            sub = w.split("®")
-            sub = [p[:1].upper() + p[1:].lower() if p else "" for p in sub]
-            out.append("®".join(sub))
-            continue
-        if any(ch.isdigit() for ch in w):
-            out.append(w)
-            continue
-        out.append(w[:1].upper() + w[1:].lower() if w else w)
+    out = [_tc_token(w) for w in parts]
     return " ".join(out)
 
 
@@ -468,15 +507,23 @@ def run_transform(
 
     # Vendor / Brand
     sup["_vendor"] = vendor_name
-    sup["_brand_choice"] = _norm(brand_choice)
+    sup["_brand_choice"] = _norm(brand_choice)    # Title (for Shopify): "Gender('s) Description - Color"
+    # - Gender: add "'s" only for Men/Women
+    # - Description: Title Case
+    # - Color: NON-standardized (as in input), but Title Case
+    def _gender_for_title(g: str) -> str:
+        gg = _norm(g)
+        if gg.lower() in ("men", "women"):
+            gg = f"{gg}'s"
+        return _title_case_preserve_registered(gg)
 
-    # Title (for Shopify): Description + Color (standardized)
-    sup["_title"] = (sup["_desc_raw"] + " " + sup["_color_std"]).str.strip()
-    # Color: NON-standardized, but Title Case
-    sup.loc[sup["_color_in"].astype(str).str.strip().ne(""), "_title"] = (
-        sup["_title"].str.strip()
-        + " - "
-        + sup["_color_in"].astype(str).fillna("").map(_title_case_preserve_registered)
+    sup["_gender_title"] = sup["_gender_std"].astype(str).fillna("").map(_gender_for_title)
+    sup["_desc_title"] = sup["_desc_seo"].astype(str).fillna("").map(_title_case_preserve_registered)
+    sup["_color_title"] = sup["_color_in"].astype(str).fillna("").map(_title_case_preserve_registered)
+
+    sup["_title"] = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
+    sup.loc[sup["_color_title"].str.strip().ne(""), "_title"] = (
+        sup["_title"].str.strip() + " - " + sup["_color_title"].str.strip()
     )
 
     # -------------------------
@@ -488,7 +535,7 @@ def run_transform(
             _strip_reg_for_handle(r["_vendor"]),
             _strip_reg_for_handle(r["_gender_std"]),
             r["_desc_handle"],
-            _strip_reg_for_handle(r["_color_std"]),
+            _strip_reg_for_handle(r["_color_in"]),
         ]
         parts = [p for p in parts if p and str(p).strip()]
         return slugify(" ".join(parts))
@@ -496,7 +543,7 @@ def run_transform(
     sup["_handle"] = sup.apply(_make_handle, axis=1)
 
     # Custom Product Type (loose singular/plural)
-    sup["_product_type"] = sup["_title"].apply(lambda t: _best_match_product_type(t, product_types))
+        sup["_product_type"] = sup["_desc_raw"].apply(lambda t: _best_match_product_type(t, product_types))
 
     # Tags
     def _make_tags(r):
@@ -563,15 +610,13 @@ def run_transform(
     sup["_size_comment"] = sup.apply(_size_comment, axis=1)
 
     # Categories
-    sup["_shopify_cat_id"] = sup["_title"].apply(lambda t: _best_match_id(t, shopify_cat_rows))
-    sup["_google_cat_id"] = sup["_title"].apply(lambda t: _best_match_id(t, google_cat_rows))
+        sup["_shopify_cat_id"] = sup["_desc_raw"].apply(lambda t: _best_match_id(t, shopify_cat_rows))
+        sup["_google_cat_id"] = sup["_desc_raw"].apply(lambda t: _best_match_id(t, google_cat_rows))
 
     # Siblings
-    sup["_siblings"] = sup.apply(lambda r: slugify(f"{r['_vendor']} {r['_desc_handle']}"), axis=1)
-
-    # SEO Title
+    sup["_siblings"] = sup.apply(lambda r: slugify(f"{r['_vendor']} {r['_desc_handle']}"), axis=1)    # SEO Title
     # - Adds "'s" for Men/Women
-    # - Title Case (strict) for every word
+    # - Title Case (strict + separators)
     def _seo_title(r):
         g = _norm(r["_gender_std"])
         if g.lower() in ("men", "women"):
@@ -581,9 +626,7 @@ def run_transform(
         color = _title_case_preserve_registered(r["_color_std"])
         return f"{main} - {color}".strip() if color else main
 
-    sup["_seo_title"] = sup.apply(_seo_title, axis=1)
-
-    # SEO Description
+    sup["_seo_title"] = sup.apply(_seo_title, axis=1)    # SEO Description
     # a) If brand NOT in "SEO Description Brand Part": "Discover [Brand Name] products."
     # b) If brand IS in that sheet: "Discover [Brand Name] " + Column B text
     def _seo_desc(r):
@@ -685,8 +728,8 @@ def run_transform(
         "Option1 Value",
         "Variant Price",
         "Variant Grams",
-        "Variant Country of Origin",
         "Variant HS Code",
+        "Variant Country of Origin",
         "SEO Title",
         "SEO Description",
         "Metafield: my_fields.size_comment [single_line_text_field]",
