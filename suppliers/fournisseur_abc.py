@@ -198,37 +198,6 @@ def _standardize(val: str, mapping: dict[str, str]) -> str:
     return mapping.get(s.lower(), s)
 
 
-# -------------------------
-# COLOR ONLY normalization
-# -------------------------
-def _normalize_color_key(val: str) -> str:
-    """
-    Normalize ONLY for color mapping keys:
-    - unify unicode dashes (–, —) -> "-"
-    - collapse separators like " - " or " / " -> "-"
-    - trim and lowercase
-    """
-    s = _norm(val)
-    if not s:
-        return ""
-    s = s.replace("–", "-").replace("—", "-")
-    s = re.sub(r"\s*[-/]\s*", "-", s)
-    return s.strip().lower()
-
-
-def _standardize_color(val: str, mapping: dict[str, str]) -> str:
-    """
-    Standardize color using a more robust key normalization,
-    while keeping returned value identical to previous behavior:
-    - if no match, return original normalized string (not the key)
-    """
-    original = _norm(val)
-    if not original or original.lower() == "nan":
-        return ""
-    key = _normalize_color_key(original)
-    return mapping.get(key, original)
-
-
 def _read_list_column(wb, sheet_name: str) -> list[str]:
     if sheet_name not in wb.sheetnames:
         return []
@@ -368,6 +337,37 @@ def _best_match_id(text: str, cat_rows) -> str:
     # 2) LONG SLEEVE fallback -> ALWAYS Jersey
     w = _wordset_loose(text)
     if {"long", "sleeve"}.issubset(w):
+        got = _match(f"{text} jersey")
+        if got:
+            return got
+
+    return ""
+
+    def _match(t: str) -> str:
+        tset = _wordset_loose(t)
+        best_id = ""
+        best_len = 0
+        for name, cid in cat_rows:
+            nset = _wordset_loose(name)
+            if nset and nset.issubset(tset):
+                if len(nset) > best_len:
+                    best_len = len(nset)
+                    best_id = str(cid or "").strip()
+        best_id = re.sub(r"\.0$", "", best_id) if best_id else ""
+        return best_id
+
+    # 1) normal match
+    got = _match(text)
+    if got:
+        return got
+
+    # 2) LONG SLEEVE fallback: if only "long sleeve" appears, we try common garment types
+    w = _wordset_loose(text)
+    if {"long", "sleeve"}.issubset(w):
+        # Prefer T-Shirt when no further hint is present
+        got = _match(f"{text} tshirt")
+        if got:
+            return got
         got = _match(f"{text} jersey")
         if got:
             return got
@@ -567,7 +567,7 @@ def run_transform(
     sup.loc[sup["_size_in"].eq(""), "_size_in"] = sup["_size_fb"]
 
     # Standardize
-    sup["_color_std"] = sup["_color_in"].apply(lambda x: _standardize_color(x, color_map))
+    sup["_color_std"] = sup["_color_in"].apply(lambda x: _standardize(x, color_map))
     sup["_size_std"] = sup["_size_in"].apply(lambda x: _standardize(x, size_map))
 
     # Gender (standardize if possible)
