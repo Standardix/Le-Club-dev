@@ -1,9 +1,9 @@
 import streamlit as st
 import io
-import time
-import hashlib
 import openpyxl
 import pandas as pd
+import time
+import hashlib
 
 from suppliers.fournisseur_abc import run_transform as run_abc
 
@@ -38,46 +38,32 @@ st.markdown(
 
 st.title("Générateur de fichier Shopify")
 
-st.markdown(
-    """
-1) Téléverse ton **fichier fournisseur** (Excel)  
-2) Téléverse ton fichier **Help Data** (Excel)  
-3) Configure tes **Tags**  
-4) Clique sur **Générer le fichier Shopify**
-"""
-)
-
-# -----------------------
-# Uploads
-# -----------------------
-supplier_file = st.file_uploader("📄 Fichier fournisseur (Excel)", type=["xlsx"])
-help_file = st.file_uploader("🧩 Help Data (Excel)", type=["xlsx"])
-
-
-# -----------------------
-# Suppliers
-# -----------------------
 SUPPLIERS = {
     "Balmoral": run_abc,
     "Bandit": run_abc,
-    "Black Sheep": run_abc,
+    "Café du Cycliste": run_abc,
     "Ciele": run_abc,
-    "Clif Bar": run_abc,
-    "Cody": run_abc,
-    "Duer": run_abc,
-    "Hoka": run_abc,
-    "Maurten": run_abc,
-    "Norda": run_abc,
-    "Oakley": run_abc,
+    "District Vision": run_abc,
+    "Fingerscrossed": run_abc,
+    "MAAP": run_abc,
     "Pas Normal Studios": run_abc,
     "Tracksmith": run_abc,
 }
 
+st.markdown("### 1️⃣ Sélection du fournisseur")
 supplier_name = st.selectbox("Choisir le fournisseur", list(SUPPLIERS.keys()))
 
-# -----------------------
-# Helpers
-# -----------------------
+st.markdown("### 2️⃣ Upload des fichiers")
+supplier_file = st.file_uploader("Fichier fournisseur (.xlsx)", type=["xlsx"])
+help_file = st.file_uploader("Help data (.xlsx)", type=["xlsx"])
+
+
+# =========================
+# 3️⃣ Tags
+# =========================
+event_promo_tag = ""
+style_season_map = {}
+
 def _first_existing_col(cols, candidates):
     cols_l = [c.lower() for c in cols]
     for c in candidates:
@@ -85,15 +71,9 @@ def _first_existing_col(cols, candidates):
             return cols[cols_l.index(c.lower())]
     return None
 
-
 def _extract_unique_style_rows(xlsx_bytes):
-    """Return a dataframe of unique styles for the seasonality table.
-
-    Display order:
-      1) Style Name
-      2) Style Number
-
-    Returns None if neither column is found.
+    """Extract unique styles for Seasonality tagging (per style).
+    Displays (when available) in this order: Style Name, Style Number.
     """
     bio = io.BytesIO(xlsx_bytes)
     xls = pd.ExcelFile(bio)
@@ -146,62 +126,48 @@ def _extract_unique_style_rows(xlsx_bytes):
 
     return out[cols].reset_index(drop=True)
 
+if supplier_file is not None:
+    st.markdown("### 3️⃣ Tags")
 
-# -----------------------
-# 3) Tags
-# -----------------------
-style_season_map = {}
-event_promo_tag = ""
-
-if supplier_file:
-    st.markdown("### 3) Tags")
-
+    # Event/Promotion Related (applies to entire file)
     event_promo_tag = st.selectbox(
         "Event/Promotion Related",
         options=["", "spring-summer", "fall-winter"],
         index=0,
-        help="S'applique à l'ensemble des pièces du fichier (optionnel).",
     )
 
-    st.markdown("---")
-
+    # Seasonality per style (table with free-text)
     style_rows_df = _extract_unique_style_rows(supplier_file.getvalue())
-
     if style_rows_df is not None and not style_rows_df.empty:
-        st.caption("Saisonality (par style) — **champ libre**. Le tag sera ajouté dans **Tags** pour toutes les lignes du même style.")
+        st.markdown("#### Seasonality")
 
         key_col = "Style Number" if "Style Number" in style_rows_df.columns else "Style Name"
 
-        # fingerprint for widget key (prevents 'type twice' issue)
         supplier_fp = hashlib.md5(supplier_file.getvalue()).hexdigest()
         styles_fp = hashlib.md5("|".join(style_rows_df[key_col].astype(str).tolist()).encode("utf-8")).hexdigest()
         fp = f"{supplier_fp}:{styles_fp}:{key_col}"
+        editor_key = f"seasonality_editor_{fp}"
 
-        # init/refresh only when file/styles change
         if st.session_state.get("seasonality_fp") != fp:
             st.session_state["seasonality_fp"] = fp
 
-            # preserve existing values (if any)
-            existing_map = {}
-            existing = st.session_state.get("seasonality_df")
-            if existing is not None and key_col in existing.columns and "Saisonality tag" in existing.columns:
-                existing_map = {
+            prev = st.session_state.get("seasonality_df")
+            prev_map = {}
+            if prev is not None and key_col in prev.columns and "Seasonality Tags" in prev.columns:
+                prev_map = {
                     str(k).strip(): str(v).strip()
-                    for k, v in zip(existing[key_col].astype(str), existing["Saisonality tag"].astype(str))
+                    for k, v in zip(prev[key_col].astype(str), prev["Seasonality Tags"].astype(str))
                     if str(k).strip()
                 }
 
             init_df = style_rows_df.copy()
-            init_df["Saisonality tag"] = init_df[key_col].astype(str).map(lambda k: existing_map.get(str(k).strip(), ""))
+            init_df["Seasonality Tags"] = init_df[key_col].astype(str).map(lambda k: prev_map.get(str(k).strip(), ""))
             st.session_state["seasonality_df"] = init_df
 
         base_df = st.session_state.get("seasonality_df", style_rows_df.copy())
-        if "Saisonality tag" not in base_df.columns:
+        if "Seasonality Tags" not in base_df.columns:
             base_df = base_df.copy()
-            base_df["Saisonality tag"] = ""
-
-        # IMPORTANT: key is tied to fp to stabilize widget state and avoid first entry disappearing
-        editor_key = f"seasonality_editor_{fp}"
+            base_df["Seasonality Tags"] = ""
 
         edited_df = st.data_editor(
             base_df,
@@ -212,28 +178,28 @@ if supplier_file:
             column_config={
                 "Style Name": st.column_config.TextColumn(disabled=True),
                 "Style Number": st.column_config.TextColumn(disabled=True),
-                "Saisonality tag": st.column_config.TextColumn(
-                    help="Champ libre : ex. spring-summer, fall, core, etc.",
+                "Seasonality Tags": st.column_config.TextColumn(
+                    help="Champ libre (ex: spring-summer, fall-winter, core, etc.)",
                     required=False,
                 ),
             },
         )
 
+        # Persist immediately so typing stays on first entry
         st.session_state["seasonality_df"] = edited_df
 
         style_season_map = {}
         for _, r in edited_df.iterrows():
             k = str(r.get(key_col, "")).strip()
-            v = str(r.get("Saisonality tag", "")).strip()
+            v = str(r.get("Seasonality Tags", "")).strip()
             if k and v:
                 style_season_map[k] = v
     else:
-        st.info("Aucun champ 'Style Name' ou 'Style Number' détecté dans le fichier. La saisonalité par style sera ignorée.")
-        style_season_map = {}
+        st.info("Aucun champ 'Style Name' ou 'Style Number' détecté dans le fichier. Seasonality ignorée.")
 
-# -----------------------
-# 4) Génération
-# -----------------------
+# 🔹 Projet pilote : pas de sélection de marque
+brand_choice = ""
+
 generate = st.button(
     "Générer le fichier Shopify",
     type="secondary",
@@ -249,34 +215,45 @@ if generate:
         transform_fn = SUPPLIERS[supplier_name]
 
         status.info("Préparation des fichiers…")
-        time.sleep(0.2)
-        progress.progress(20)
+        progress.progress(10)
+        time.sleep(0.15)
 
-        help_wb = openpyxl.load_workbook(io.BytesIO(help_file.getvalue()), data_only=True)
+        status.info("Lecture du fichier fournisseur…")
+        progress.progress(25)
+        time.sleep(0.15)
 
-        status.info("Transformation en cours…")
-        time.sleep(0.2)
-        progress.progress(60)
+        status.info("Lecture du help data…")
+        progress.progress(40)
+        time.sleep(0.15)
 
-        output_bytes = transform_fn(
-            supplier_xlsx_bytes=supplier_file.getvalue(),
-            help_xlsx_bytes=help_file.getvalue(),
-            vendor_name=supplier_name,
-            brand_choice="",
-            style_season_map=style_season_map,
-            event_promo_tag=event_promo_tag,
-        )
+        with st.spinner("Traitement en cours…"):
+            output_bytes, warnings_df = transform_fn(
+                supplier_xlsx_bytes=supplier_file.getvalue(                event_promo_tag=event_promo_tag,
+                style_season_map=style_season_map,
+            ),
+                help_xlsx_bytes=help_file.getvalue(),
+                vendor_name=supplier_name,
+                brand_choice=brand_choice,  # toujours vide pour le pilote
+            )
 
-        status.success("Fichier Shopify généré ✅")
+        status.info("Finalisation du fichier Shopify…")
+        progress.progress(85)
+        time.sleep(0.15)
+
         progress.progress(100)
+        status.success("Fichier généré avec succès ✅")
+
+        if warnings_df is not None and not warnings_df.empty:
+            with st.expander("⚠️ Warnings détectés"):
+                st.dataframe(warnings_df, use_container_width=True)
 
         st.download_button(
-            "⬇️ Télécharger le fichier Shopify",
+            label="⬇️ Télécharger output.xlsx",
             data=output_bytes,
-            file_name="shopify_output.xlsx",
+            file_name=f"output_{supplier_name.replace(' ', '_')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
     except Exception as e:
-        status.error(f"Erreur lors de la génération : {e}")
         progress.empty()
+        status.error(f"Erreur lors de la génération : {e}")
