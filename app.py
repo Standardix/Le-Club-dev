@@ -4,6 +4,47 @@ import openpyxl
 import time
 import pandas as pd
 
+def _seasonality_editor(style_rows_df):
+    """Render seasonality per style as a free-text field.
+
+    Expects columns: 'Style Name' (optional) and 'Style Number' (optional).
+    Returns an edited dataframe with an additional column: 'Seasonality Tag'.
+    """
+    import pandas as pd
+
+    # Ensure expected display columns exist
+    cols = []
+    if "Style Name" in style_rows_df.columns:
+        cols.append("Style Name")
+    if "Style Number" in style_rows_df.columns:
+        cols.append("Style Number")
+
+    if not cols:
+        return None
+
+    season_df = style_rows_df[cols].drop_duplicates().copy()
+    if "Seasonality Tag" not in season_df.columns:
+        season_df["Seasonality Tag"] = ""
+
+    # Keep stable order
+    season_df = season_df[cols + ["Seasonality Tag"]]
+
+    edited = st.data_editor(
+        season_df,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        column_config={
+            "Seasonality Tag": st.column_config.TextColumn(
+                "Seasonality Tag",
+                help="Champ libre : exemple 'spring-summer', 'fall', 'core', etc.",
+                required=False,
+            )
+        },
+    )
+    return edited
+
+
 from suppliers.fournisseur_abc import run_transform as run_abc
 
 st.set_page_config(page_title="Générateur Shopify – Fichiers fournisseurs", layout="wide")
