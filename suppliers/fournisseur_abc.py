@@ -492,19 +492,12 @@ def run_transform(
     help_xlsx_bytes: bytes,
     vendor_name: str,
     brand_choice: str = "",
-    style_season_map: dict[str, str] | None = None,
     event_promo_tag: str = "",
+    style_season_map: dict[str, str] | None = None,
 ):
     warnings: list[dict] = []
 
-    # Normalize seasonality map keys/values once (robust to extra spaces)
     style_season_map = style_season_map or {}
-    style_season_map = {
-        _norm(k): _norm(v)
-        for k, v in style_season_map.items()
-        if _norm(k) and _norm(v)
-    }
-
     # -----------------------------------------------------
     # Supplier reader (multi-sheet capable)
     # -----------------------------------------------------
@@ -614,20 +607,17 @@ def run_transform(
     grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight"])
     gender_col = _first_existing_col(sup, ["Gender", "gender", "Genre", "genre", "Sex", "sex", "Sexe", "sexe"])
 
-    # Style identifier (for seasonality tagging per style)
-    style_col = _first_existing_col(
-        sup,
-        [
-            "Style Number",
-            "style number",
-            "Style",
-            "style",
-            "Style Num",
-            "style num",
-            "Style Name",
-            "style name",
-        ],
-    )
+    # -----------------------------------------------------
+    # Style key (for Seasonality tags per style)
+    # -----------------------------------------------------
+    style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
+    style_name_col = _first_existing_col(sup, ["Style Name", "style name", "Product Name", "Name"])
+
+    sup["_style_key"] = ""
+    if style_num_col is not None:
+        sup["_style_key"] = sup[style_num_col].astype(str).fillna("").map(_norm)
+    elif style_name_col is not None:
+        sup["_style_key"] = sup[style_name_col].astype(str).fillna("").map(_norm)
 
     if desc_col is None:
         raise ValueError(
@@ -754,24 +744,15 @@ def run_transform(
         tags.append("_badge_new")
         if r["_product_type"]:
             tags.append(r["_product_type"])
-
-        # Seasonality tag (per style)
-        if style_season_map:
-            sk = ""
-            if style_col and str(r.get(style_col, "")).strip():
-                sk = _norm(r.get(style_col, ""))
-            # Fallback: use description as key if style column is missing
-            if not sk:
-                sk = _norm(r.get("_desc_raw", ""))
-
-            stg = style_season_map.get(sk, "")
-            if stg:
-                tags.append(stg)
-
-
         # Event/Promotion Related (applies to entire file)
         if event_promo_tag:
             tags.append(event_promo_tag)
+
+        # Seasonality tag (per style)
+        stg = style_season_map.get(_norm(r.get("_style_key", "")))
+        if stg:
+            tags.append(stg)
+
         return ", ".join([t for t in tags if t])
 
     sup["_tags"] = sup.apply(_make_tags, axis=1)
