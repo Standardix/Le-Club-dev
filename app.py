@@ -164,7 +164,21 @@ if supplier_file is not None:
             init_df["Seasonality Tags"] = init_df[key_col].astype(str).map(lambda k: prev_map.get(str(k).strip(), ""))
             st.session_state["seasonality_df"] = init_df
 
-        base_df = st.session_state.get("seasonality_df", style_rows_df.copy())
+        base_df = None
+
+        # If Streamlit already has widget state for this editor key, prefer it (prevents "first write disappears").
+        if editor_key in st.session_state:
+            try:
+                base_df = st.session_state[editor_key]
+                # widget state can sometimes be a list/dict; normalize to DataFrame
+                if not isinstance(base_df, pd.DataFrame):
+                    base_df = pd.DataFrame(base_df)
+            except Exception:
+                base_df = None
+
+        if base_df is None:
+            base_df = st.session_state.get("seasonality_df", style_rows_df.copy())
+
         if "Seasonality Tags" not in base_df.columns:
             base_df = base_df.copy()
             base_df["Seasonality Tags"] = ""
@@ -187,6 +201,7 @@ if supplier_file is not None:
 
         # Persist immediately so typing stays on first entry
         st.session_state["seasonality_df"] = edited_df
+        st.session_state[editor_key] = edited_df
 
         style_season_map = {}
         for _, r in edited_df.iterrows():
@@ -228,12 +243,12 @@ if generate:
 
         with st.spinner("Traitement en cours…"):
             output_bytes, warnings_df = transform_fn(
-                supplier_xlsx_bytes=supplier_file.getvalue(                event_promo_tag=event_promo_tag,
-                style_season_map=style_season_map,
-            ),
+                supplier_xlsx_bytes=supplier_file.getvalue(),
                 help_xlsx_bytes=help_file.getvalue(),
                 vendor_name=supplier_name,
                 brand_choice=brand_choice,  # toujours vide pour le pilote
+                event_promo_tag=event_promo_tag,
+                style_season_map=style_season_map,
             )
 
         status.info("Finalisation du fichier Shopify…")
