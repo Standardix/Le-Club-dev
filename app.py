@@ -142,12 +142,15 @@ if supplier_file is not None:
         st.markdown("#### Seasonality")
 
         key_col = "Style Number" if "Style Number" in style_rows_df.columns else "Style Name"
+        # Stabilize ordering so the fingerprint doesn't change between reruns
+        style_rows_df = style_rows_df.sort_values(by=key_col).reset_index(drop=True)
 
         supplier_fp = hashlib.md5(supplier_file.getvalue()).hexdigest()
         styles_fp = hashlib.md5("|".join(style_rows_df[key_col].astype(str).tolist()).encode("utf-8")).hexdigest()
         fp = f"{supplier_fp}:{styles_fp}:{key_col}"
         editor_key = f"seasonality_editor_{fp}"
 
+        # Initialize ONLY when file/styles change (so typing doesn't get wiped)
         if st.session_state.get("seasonality_fp") != fp:
             st.session_state["seasonality_fp"] = fp
 
@@ -164,27 +167,9 @@ if supplier_file is not None:
             init_df["Seasonality Tags"] = init_df[key_col].astype(str).map(lambda k: prev_map.get(str(k).strip(), ""))
             st.session_state["seasonality_df"] = init_df
 
-        base_df = None
-
-        # If Streamlit already has widget state for this editor key, prefer it (prevents "first write disappears").
-        if editor_key in st.session_state:
-            try:
-                base_df = st.session_state[editor_key]
-                # widget state can sometimes be a list/dict; normalize to DataFrame
-                if not isinstance(base_df, pd.DataFrame):
-                    base_df = pd.DataFrame(base_df)
-            except Exception:
-                base_df = None
-
-        if base_df is None:
-            base_df = st.session_state.get("seasonality_df", style_rows_df.copy())
-
-        if "Seasonality Tags" not in base_df.columns:
-            base_df = base_df.copy()
-            base_df["Seasonality Tags"] = ""
-
+        # IMPORTANT: always pass the same object from session_state to data_editor
         edited_df = st.data_editor(
-            base_df,
+            st.session_state["seasonality_df"],
             key=editor_key,
             use_container_width=True,
             hide_index=True,
@@ -199,9 +184,8 @@ if supplier_file is not None:
             },
         )
 
-        # Persist immediately so typing stays on first entry
+        # Persist immediately so it sticks on the first write
         st.session_state["seasonality_df"] = edited_df
-        st.session_state[editor_key] = edited_df
 
         style_season_map = {}
         for _, r in edited_df.iterrows():
