@@ -492,8 +492,17 @@ def run_transform(
     help_xlsx_bytes: bytes,
     vendor_name: str,
     brand_choice: str = "",
+    style_season_map: dict[str, str] | None = None,
 ):
     warnings: list[dict] = []
+
+    # Normalize seasonality map keys/values once (robust to extra spaces)
+    style_season_map = style_season_map or {}
+    style_season_map = {
+        _norm(k): _norm(v)
+        for k, v in style_season_map.items()
+        if _norm(k) and _norm(v)
+    }
 
     # -----------------------------------------------------
     # Supplier reader (multi-sheet capable)
@@ -597,12 +606,27 @@ def run_transform(
     size_col = _first_existing_col(sup, ["Size", "size", "Vendor Size1", "vendor size1"])
     upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "upc", "upc code"])
     origin_col = _first_existing_col(sup, ["Country Code", "Origin", "Manufacturing Country", "COO", "country code", "origin", "manufacturing country", "coo"])
-    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code"])
+    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code"])
     extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
     msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)"])
     landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
     grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight"])
     gender_col = _first_existing_col(sup, ["Gender", "gender", "Genre", "genre", "Sex", "sex", "Sexe", "sexe"])
+
+    # Style identifier (for seasonality tagging per style)
+    style_col = _first_existing_col(
+        sup,
+        [
+            "Style Number",
+            "style number",
+            "Style",
+            "style",
+            "Style Num",
+            "style num",
+            "Style Name",
+            "style name",
+        ],
+    )
 
     if desc_col is None:
         raise ValueError(
@@ -729,6 +753,20 @@ def run_transform(
         tags.append("_badge_new")
         if r["_product_type"]:
             tags.append(r["_product_type"])
+
+        # Seasonality tag (per style)
+        if style_season_map:
+            sk = ""
+            if style_col and str(r.get(style_col, "")).strip():
+                sk = _norm(r.get(style_col, ""))
+            # Fallback: use description as key if style column is missing
+            if not sk:
+                sk = _norm(r.get("_desc_raw", ""))
+
+            stg = style_season_map.get(sk, "")
+            if stg:
+                tags.append(stg)
+
         return ", ".join([t for t in tags if t])
 
     sup["_tags"] = sup.apply(_make_tags, axis=1)
