@@ -148,11 +148,15 @@ if supplier_file is not None:
         supplier_fp = hashlib.md5(supplier_file.getvalue()).hexdigest()
         styles_fp = hashlib.md5("|".join(style_rows_df[key_col].astype(str).tolist()).encode("utf-8")).hexdigest()
         fp = f"{supplier_fp}:{styles_fp}:{key_col}"
-        editor_key = f"seasonality_editor_{fp}"
+        editor_key = "seasonality_editor"
 
         # Initialize ONLY when file/styles change (so typing doesn't get wiped)
         if st.session_state.get("seasonality_fp") != fp:
             st.session_state["seasonality_fp"] = fp
+
+        # Reset the editor widget state ONLY when the file/styles change
+        if "seasonality_editor" in st.session_state:
+            del st.session_state["seasonality_editor"]
 
             prev = st.session_state.get("seasonality_df")
             prev_map = {}
