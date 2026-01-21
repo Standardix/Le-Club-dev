@@ -493,6 +493,7 @@ def run_transform(
     vendor_name: str,
     brand_choice: str = "",
     style_season_map: dict[str, str] | None = None,
+    event_promo_tag: str = "",
 ):
     warnings: list[dict] = []
 
@@ -767,6 +768,10 @@ def run_transform(
             if stg:
                 tags.append(stg)
 
+
+        # Event/Promotion Related (applies to entire file)
+        if event_promo_tag:
+            tags.append(event_promo_tag)
         return ", ".join([t for t in tags if t])
 
     sup["_tags"] = sup.apply(_make_tags, axis=1)
