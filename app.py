@@ -4,6 +4,7 @@ import openpyxl
 import pandas as pd
 import time
 import hashlib
+import re
 
 from suppliers.fournisseur_abc import run_transform as run_abc
 
@@ -64,6 +65,12 @@ help_file = st.file_uploader("Help data (.xlsx)", type=["xlsx"])
 event_promo_tag = ""
 style_season_map = {}
 
+def _clean_style_key(v):
+    s = " ".join(str(v or "").strip().split())
+    # If Excel treated an integer code as float, normalize '123.0' -> '123'
+    s = re.sub(r"^(\d+)\.0+$", r"\1", s)
+    return s
+
 def _first_existing_col(cols, candidates):
     cols_l = [c.lower() for c in cols]
     for c in candidates:
@@ -102,9 +109,9 @@ def _extract_unique_style_rows(xlsx_bytes):
 
         data = {}
         if name_col:
-            data["Style Name"] = df[name_col].astype(str).fillna("").map(lambda s: " ".join(str(s).strip().split()))
+            data["Style Name"] = df[name_col].map(_clean_style_key)
         if num_col:
-            data["Style Number"] = df[num_col].astype(str).fillna("").map(lambda s: " ".join(str(s).strip().split()))
+            data["Style Number"] = df[num_col].map(_clean_style_key)
 
         tmp = pd.DataFrame(data)
         for c in tmp.columns:
@@ -198,7 +205,7 @@ if supplier_file is not None:
 
         style_season_map = {}
         for _, r in edited_df.iterrows():
-            k = str(r.get(key_col, "")).strip()
+            k = _clean_style_key(r.get(key_col, ""))
             v = str(r.get("Seasonality Tags", "")).strip()
             if k and v:
                 style_season_map[k] = v
