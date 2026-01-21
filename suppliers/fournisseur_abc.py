@@ -63,6 +63,11 @@ SHOPIFY_OUTPUT_COLUMNS = [
 # ---------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------
+def _clean_style_key(v) -> str:
+    s = _norm(v)
+    s = re.sub(r"^(\d+)\.0+$", r"\1", s)
+    return s
+
 def _norm(s) -> str:
     return re.sub(r"\s+", " ", str(s or "").strip())
 
@@ -498,6 +503,8 @@ def run_transform(
     warnings: list[dict] = []
 
     style_season_map = style_season_map or {}
+    # Normalize keys to match supplier style keys
+    style_season_map = { _clean_style_key(k): v for k, v in style_season_map.items() }
     # -----------------------------------------------------
     # Supplier reader (multi-sheet capable)
     # -----------------------------------------------------
@@ -615,9 +622,9 @@ def run_transform(
 
     sup["_style_key"] = ""
     if style_num_col is not None:
-        sup["_style_key"] = sup[style_num_col].astype(str).fillna("").map(_norm)
+        sup["_style_key"] = sup[style_num_col].astype(str).fillna("").map(_clean_style_key)
     elif style_name_col is not None:
-        sup["_style_key"] = sup[style_name_col].astype(str).fillna("").map(_norm)
+        sup["_style_key"] = sup[style_name_col].astype(str).fillna("").map(_clean_style_key)
 
     if desc_col is None:
         raise ValueError(
@@ -749,7 +756,7 @@ def run_transform(
             tags.append(event_promo_tag)
 
         # Seasonality tag (per style)
-        stg = style_season_map.get(_norm(r.get("_style_key", "")))
+        stg = style_season_map.get(_clean_style_key(r.get("_style_key", "")))
         if stg:
             tags.append(stg)
 
