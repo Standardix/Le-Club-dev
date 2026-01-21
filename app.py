@@ -4,47 +4,6 @@ import openpyxl
 import time
 import pandas as pd
 
-def _seasonality_editor(style_rows_df):
-    """Render seasonality per style as a free-text field.
-
-    Expects columns: 'Style Name' (optional) and 'Style Number' (optional).
-    Returns an edited dataframe with an additional column: 'Seasonality Tag'.
-    """
-    import pandas as pd
-
-    # Ensure expected display columns exist
-    cols = []
-    if "Style Name" in style_rows_df.columns:
-        cols.append("Style Name")
-    if "Style Number" in style_rows_df.columns:
-        cols.append("Style Number")
-
-    if not cols:
-        return None
-
-    season_df = style_rows_df[cols].drop_duplicates().copy()
-    if "Seasonality Tag" not in season_df.columns:
-        season_df["Seasonality Tag"] = ""
-
-    # Keep stable order
-    season_df = season_df[cols + ["Seasonality Tag"]]
-
-    edited = st.data_editor(
-        season_df,
-        use_container_width=True,
-        hide_index=True,
-        num_rows="fixed",
-        column_config={
-            "Seasonality Tag": st.column_config.TextColumn(
-                "Seasonality Tag",
-                help="Champ libre : exemple 'spring-summer', 'fall', 'core', etc.",
-                required=False,
-            )
-        },
-    )
-    return edited
-
-
 from suppliers.fournisseur_abc import run_transform as run_abc
 
 st.set_page_config(page_title="Générateur Shopify – Fichiers fournisseurs", layout="wide")
@@ -117,14 +76,19 @@ def _first_existing_col(cols: list[str], candidates: list[str]) -> str | None:
     return None
 
 
-def _extract_unique_style_rows(xlsx_bytes: bytes) -> pd.DataFrame:
-    """Return unique styles as a DataFrame with columns: Style Name, Style Number.
 
-    - Uses **Style Number** (or equivalent) as the unique key.
-    - If **Style Name** exists, keeps the first non-empty name seen for that style number.
-    - Scans all sheets.
+def _extract_unique_style_rows(xlsx_bytes: bytes):
+    """Return a dataframe of unique styles for the seasonality table.
+
+    Displays Style Name then Style Number when available.
+    Fallbacks:
+      - If only one of the columns exists, returns that one.
+      - If neither exists, returns None.
     """
-    xls = pd.ExcelFile(io.BytesIO(xlsx_bytes))
+    import pandas as pd
+
+    bio = io.BytesIO(xlsx_bytes)
+    xls = pd.ExcelFile(bio)
 
     style_number_candidates = [
         "Style Number",
@@ -137,11 +101,65 @@ def _extract_unique_style_rows(xlsx_bytes: bytes) -> pd.DataFrame:
         "Style Name",
         "style name",
         "Style name",
-        "Product Name",  # fallback if some suppliers use this
     ]
 
-    style_to_name: dict[str, str] = {}
+    rows = []
+    for sheet in xls.sheet_names:
+        try:
+            df = pd.read_excel(xls, sheet_name=sheet)
+        except Exception:
+            continue
+        if df is None or df.empty:
+            continue
 
+        num_col = _first_existing_col(list(df.columns), style_number_candidates)
+        name_col = _first_existing_col(list(df.columns), style_name_candidates)
+        if not num_col and not name_col:
+            continue
+
+        tmp_cols = {}
+        if name_col:
+            tmp_cols['Style Name'] = df[name_col].astype(str).fillna('').map(lambda x: x.strip())
+        if num_col:
+            tmp_cols['Style Number'] = df[num_col].astype(str).fillna('').map(lambda x: x.strip())
+
+        tmp = pd.DataFrame(tmp_cols)
+        # drop blanks
+        if 'Style Number' in tmp.columns:
+            tmp = tmp[tmp['Style Number'].astype(str).str.strip() != '']
+        if 'Style Name' in tmp.columns:
+            tmp = tmp[tmp['Style Name'].astype(str).str.strip() != '']
+
+        rows.append(tmp)
+
+    if not rows:
+        return None
+
+    out = pd.concat(rows, ignore_index=True).drop_duplicates()
+    cols = []
+    if 'Style Name' in out.columns:
+        cols.append('Style Name')
+    if 'Style Number' in out.columns:
+        cols.append('Style Number')
+    out = out[cols].copy()
+    return out
+
+def _extract_unique_styles(xlsx_bytes: bytes) -> list[str]:
+    """Return sorted unique style identifiers from the supplier file (all valid sheets)."""
+    bio = io.BytesIO(xlsx_bytes)
+    xls = pd.ExcelFile(bio)
+
+    style_candidates = [
+        "Style Number",
+        "Style",
+        "style",
+        "Style Num",
+        "Style Name",
+        "style name",
+        "Style Number ",
+    ]
+
+    out: set[str] = set()
     for sn in xls.sheet_names:
         df = pd.read_excel(io.BytesIO(xlsx_bytes), sheet_name=sn, dtype=str)
         if df is None or df.empty:
@@ -150,81 +168,71 @@ def _extract_unique_style_rows(xlsx_bytes: bytes) -> pd.DataFrame:
         if df.empty:
             continue
 
-        num_col = _first_existing_col(df.columns.tolist(), style_number_candidates)
-        if num_col is None:
+        scol = _first_existing_col(df.columns.tolist(), style_candidates)
+        if scol is None:
             continue
 
-        name_col = _first_existing_col(df.columns.tolist(), style_name_candidates)
+        vals = (
+            df[scol]
+            .astype(str)
+            .fillna("")
+            .map(lambda s: " ".join(str(s).strip().split()))
+        )
+        for v in vals.tolist():
+            if v and v.lower() != "nan":
+                out.add(v)
 
-        # Iterate rows; keep first non-empty name for each style number
-        if name_col:
-            sub = df[[num_col, name_col]].copy()
-        else:
-            sub = df[[num_col]].copy()
-            sub["_tmp_name"] = ""
-
-        for _, row in sub.iterrows():
-            style_num = str(row.get(num_col, "")).strip()
-            if not style_num or style_num.lower() == "nan":
-                continue
-
-            style_name = ""
-            if name_col:
-                style_name = str(row.get(name_col, "")).strip()
-            else:
-                style_name = str(row.get("_tmp_name", "")).strip()
-
-            if style_num not in style_to_name:
-                style_to_name[style_num] = style_name if style_name.lower() != "nan" else ""
-            else:
-                # If we already have it but it's blank, upgrade when we find a real name
-                if not style_to_name[style_num] and style_name and style_name.lower() != "nan":
-                    style_to_name[style_num] = style_name
-
-    # Build sorted output
-    style_numbers = sorted(style_to_name.keys())
-    return pd.DataFrame(
-        {
-            "Style Name": [style_to_name.get(n, "") for n in style_numbers],
-            "Style Number": style_numbers,
-        }
-    )
-
+    return sorted(out)
 
 
 style_season_map: dict[str, str] = {}
 
 if supplier_file is not None:
     try:
-        style_rows = _extract_unique_style_rows(supplier_file.getvalue())
-        styles = style_rows["Style Number"].tolist()
+        styles = _extract_unique_styles(supplier_file.getvalue())
         if styles:
-            if "seasonality_df" not in st.session_state or set(st.session_state["seasonality_df"]["Style Number"].tolist()) != set(styles):
+            if "seasonality_df" not in st.session_state or set(st.session_state["seasonality_df"]["Style"].tolist()) != set(styles):
                 st.session_state["seasonality_df"] = pd.DataFrame({
-                    "Style Name": style_rows["Style Name"].tolist(),
-                    "Style Number": style_rows["Style Number"].tolist(),
-                    "Saisonality tag": ["" for _ in style_rows.index],
+                    "Style": styles,
+                    "Saisonality tag": ["" for _ in styles],
                 })
 
             st.caption("Le programme ajoutera ce tag directement dans la colonne **Tags** pour toutes les lignes ayant le même style.")
-            seasonality_df = st.data_editor(
-                st.session_state["seasonality_df"],
-                use_container_width=True,
-                num_rows="fixed",
-                column_config={
-                    "Style Name": st.column_config.TextColumn(disabled=True),
-                    "Style Number": st.column_config.TextColumn(disabled=True),
-                    "Saisonality tag": st.column_config.SelectboxColumn(options=SEASONALITY_OPTIONS),
-                },
-            )
-            st.session_state["seasonality_df"] = seasonality_df
-            style_season_map = {
-                str(r["Style Number"]).strip(): str(r["Saisonality tag"]).strip()
-                for _, r in seasonality_df.iterrows()
-                if str(r.get("Style Number", "")).strip() and str(r.get("Saisonality tag", "")).strip()
-            }
-        else:
-            st.info("Aucun champ 'Style' détecté dans le fichier (ex: Style Number / Style / Style Name). La saisonalité par style sera ignorée.")
+
+            # Build the seasonality table (unique styles)
+            style_rows_df = _extract_unique_style_rows(supplier_file.getvalue())
+            if style_rows_df is not None and not style_rows_df.empty:
+                if "seasonality_df" not in st.session_state:
+                    seasonality_df_init = style_rows_df.copy()
+                    seasonality_df_init["Saisonality tag"] = ""
+                    st.session_state["seasonality_df"] = seasonality_df_init
+
+                seasonality_df = st.data_editor(
+                    st.session_state["seasonality_df"],
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="fixed",
+                    column_config={
+                        "Style Name": st.column_config.TextColumn(disabled=True),
+                        "Style Number": st.column_config.TextColumn(disabled=True),
+                        "Saisonality tag": st.column_config.TextColumn(
+                            help="Champ libre : exemple spring-summer, fall, core, etc.",
+                            required=False,
+                        ),
+                    },
+                )
+                st.session_state["seasonality_df"] = seasonality_df
+
+                style_season_map = {}
+                key_col = "Style Number" if "Style Number" in seasonality_df.columns else "Style Name"
+                for _, r in seasonality_df.iterrows():
+                    k = str(r.get(key_col, "")).strip()
+                    v = str(r.get("Saisonality tag", "")).strip()
+                    if k and v:
+                        style_season_map[k] = v
+            else:
+                st.info("Aucun champ 'Style Name' ou 'Style Number' détecté dans le fichier. La saisonalité par style sera ignorée.")
+                style_season_map = {}
     except Exception as e:
         st.warning(f"Impossible d'extraire les styles pour la saisonalité : {e}")
 
