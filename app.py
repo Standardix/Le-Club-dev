@@ -172,6 +172,11 @@ if supplier_file is not None:
             st.session_state["seasonality_df"] = init_df
 
         # IMPORTANT: always pass the same object from session_state to data_editor
+        if "seasonality_df" not in st.session_state or st.session_state["seasonality_df"] is None:
+            tmp = style_rows_df.copy()
+            tmp["Seasonality Tags"] = ""
+            st.session_state["seasonality_df"] = tmp
+
         edited_df = st.data_editor(
             st.session_state["seasonality_df"],
             key=editor_key,
