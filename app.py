@@ -155,8 +155,8 @@ style_season_map: dict[str, str] = {}
 
 if supplier_file is not None:
     try:
-        style_rows = _extract_unique_style_rows(supplier_file.getvalue()
-        styles = style_rows[\"Style Number\"].tolist())
+        style_rows = _extract_unique_style_rows(supplier_file.getvalue())
+        styles = style_rows["Style Number"].tolist()
         if styles:
             if "seasonality_df" not in st.session_state or set(st.session_state["seasonality_df"]["Style Number"].tolist()) != set(styles):
                 st.session_state["seasonality_df"] = pd.DataFrame({
