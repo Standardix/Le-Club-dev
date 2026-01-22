@@ -63,14 +63,16 @@ SHOPIFY_OUTPUT_COLUMNS = [
 # ---------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------
-def _clean_style_key(v) -> str:
-    s = _norm(v)
-    s = re.sub(r"^(\d+)\.0+$", r"\1", s)
-    return s
-
 def _norm(s) -> str:
     return re.sub(r"\s+", " ", str(s or "").strip())
 
+
+
+def _clean_style_key(v) -> str:
+    s = _norm(v)
+    # if Excel treated numeric as float: 123.0 -> 123
+    s = re.sub(r"^(\d+)\.0+$", r"\1", s)
+    return s
 
 def _strip_reg_for_handle(s: str) -> str:
     """Handle only: remove ® and (r)/[r] to keep URL safe."""
@@ -503,8 +505,8 @@ def run_transform(
     warnings: list[dict] = []
 
     style_season_map = style_season_map or {}
-    # Normalize keys to match supplier style keys
     style_season_map = { _clean_style_key(k): v for k, v in style_season_map.items() }
+
     # -----------------------------------------------------
     # Supplier reader (multi-sheet capable)
     # -----------------------------------------------------
@@ -613,18 +615,6 @@ def run_transform(
     landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
     grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight"])
     gender_col = _first_existing_col(sup, ["Gender", "gender", "Genre", "genre", "Sex", "sex", "Sexe", "sexe"])
-
-    # -----------------------------------------------------
-    # Style key (for Seasonality tags per style)
-    # -----------------------------------------------------
-    style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
-    style_name_col = _first_existing_col(sup, ["Style Name", "style name", "Product Name", "Name"])
-
-    sup["_style_key"] = ""
-    if style_num_col is not None:
-        sup["_style_key"] = sup[style_num_col].astype(str).fillna("").map(_clean_style_key)
-    elif style_name_col is not None:
-        sup["_style_key"] = sup[style_name_col].astype(str).fillna("").map(_clean_style_key)
 
     if desc_col is None:
         raise ValueError(
@@ -740,6 +730,17 @@ def run_transform(
     sup["_product_type"] = sup["_desc_raw"].apply(lambda t: _best_match_product_type(t, product_types))
 
     # Tags (keep standardized color/gender tags)
+    # -----------------------------------------------------
+    # Seasonality key (to apply Seasonality Tags per style)
+    # -----------------------------------------------------
+    style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
+    style_name_col = _first_existing_col(sup, ["Style Name", "style name", "Product Name", "Name"])
+    sup["_seasonality_key"] = ""
+    if style_num_col is not None:
+        sup["_seasonality_key"] = sup[style_num_col].astype(str).fillna("").map(_clean_style_key)
+    elif style_name_col is not None:
+        sup["_seasonality_key"] = sup[style_name_col].astype(str).fillna("").map(_clean_style_key)
+
     def _make_tags(r):
         tags = []
         if r["_vendor"]:
@@ -756,7 +757,7 @@ def run_transform(
             tags.append(event_promo_tag)
 
         # Seasonality tag (per style)
-        stg = style_season_map.get(_clean_style_key(r.get("_style_key", "")))
+        stg = style_season_map.get(_clean_style_key(r.get("_seasonality_key", "")))
         if stg:
             tags.append(stg)
 
