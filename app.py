@@ -223,8 +223,13 @@ if supplier_file is not None:
             },
         )
 
-        # Use the widget's live state (prevents needing to type twice)
+        # Use the widget live state; normalize to DataFrame
         current_df = st.session_state.get("seasonality_editor", edited_df)
+        if not isinstance(current_df, pd.DataFrame):
+            try:
+                current_df = pd.DataFrame(current_df)
+            except Exception:
+                current_df = edited_df
         style_season_map = {}
         for _, r in current_df.iterrows():
             k = _clean_style_key(r.get(key_col, ""))
