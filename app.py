@@ -182,42 +182,6 @@ if supplier_file is not None:
             tmp["Seasonality Tags"] = ""
             st.session_state["seasonality_df"] = tmp
 
-        edited_df = st.data_editor(
-            st.session_state["seasonality_df"],
-            key=widget_key,
-            use_container_width=True,
-            hide_index=True,
-            num_rows="fixed",
-            column_config={
-                "Style Name": st.column_config.TextColumn(disabled=True),
-                "Style Number": st.column_config.TextColumn(disabled=True),
-                "Seasonality Tags": st.column_config.TextColumn(
-                    help="Champ libre (ex: spring-summer, fall-winter, core, etc.)",
-                    required=False,
-                ),
-            },
-        )
-
-        # Persist immediately (this is allowed because key differs from widget_key)
-        st.session_state["seasonality_df"] = edited_df
-
-        style_season_map = {}
-        for _, r in edited_df.iterrows():
-            k = _clean_style_key(r.get(key_col, ""))
-            v = str(r.get("Seasonality Tags", "")).strip()
-            if k and v:
-                style_season_map[k] = v
-        st.markdown("#### Seasonality")
-
-        key_col = "Style Number" if "Style Number" in style_rows_df.columns else "Style Name"
-        style_rows_df = style_rows_df.sort_values(by=key_col).reset_index(drop=True)
-
-        supplier_fp = hashlib.md5(supplier_file.getvalue()).hexdigest()
-        styles_fp = hashlib.md5("|".join(style_rows_df[key_col].astype(str).tolist()).encode("utf-8")).hexdigest()
-        fp = f"{supplier_fp}:{styles_fp}:{key_col}"
-
-        # init only when file/styles change
-        if st.session_state.get("seasonality_fp") != fp:
             st.session_state["seasonality_fp"] = fp
 
             # reset widget state only on change
@@ -259,10 +223,10 @@ if supplier_file is not None:
             },
         )
 
-        st.session_state["seasonality_df"] = edited_df
-
+        # Use the widget's live state (prevents needing to type twice)
+        current_df = st.session_state.get("seasonality_editor", edited_df)
         style_season_map = {}
-        for _, r in edited_df.iterrows():
+        for _, r in current_df.iterrows():
             k = _clean_style_key(r.get(key_col, ""))
             v = str(r.get("Seasonality Tags", "")).strip()
             if k and v:
