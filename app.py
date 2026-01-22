@@ -152,30 +152,39 @@ if supplier_file is not None:
         supplier_fp = hashlib.md5(supplier_file.getvalue()).hexdigest()
         styles_fp = hashlib.md5("|".join(style_rows_df[key_col].astype(str).tolist()).encode("utf-8")).hexdigest()
         fp = f"{supplier_fp}:{styles_fp}:{key_col}"
-        editor_key = "seasonality_editor"
+        widget_key = "seasonality_editor"
 
-        # Reset the editor ONLY when the file/styles change
+        # Initialize/refresh ONLY when file/styles change
         if st.session_state.get("seasonality_fp") != fp:
             st.session_state["seasonality_fp"] = fp
+
+            # preserve prior entries from stored df (not widget key)
+            prev = st.session_state.get("seasonality_df")
             prev_map = {}
-            if editor_key in st.session_state and isinstance(st.session_state[editor_key], pd.DataFrame):
-                prev_df = st.session_state[editor_key]
-                if key_col in prev_df.columns and "Seasonality Tags" in prev_df.columns:
-                    prev_map = {
-                        _clean_style_key(k): str(v).strip()
-                        for k, v in zip(prev_df[key_col].astype(str), prev_df['Seasonality Tags'].astype(str))
-                        if _clean_style_key(k)
-                    }
-        
+            if prev is not None and isinstance(prev, pd.DataFrame) and key_col in prev.columns and "Seasonality Tags" in prev.columns:
+                prev_map = {
+                    _clean_style_key(k): str(v).strip()
+                    for k, v in zip(prev[key_col].astype(str), prev['Seasonality Tags'].astype(str))
+                    if _clean_style_key(k)
+                }
+
             init_df = style_rows_df.copy()
             init_df["Seasonality Tags"] = init_df[key_col].astype(str).map(lambda k: prev_map.get(_clean_style_key(k), ""))
-            if editor_key in st.session_state:
-                del st.session_state[editor_key]
-            st.session_state[editor_key] = init_df
+            st.session_state["seasonality_df"] = init_df
+
+            # Reset the widget state so it reloads the new dataframe cleanly
+            if widget_key in st.session_state:
+                del st.session_state[widget_key]
+
+        # Safety: ensure df exists
+        if "seasonality_df" not in st.session_state or st.session_state["seasonality_df"] is None:
+            tmp = style_rows_df.copy()
+            tmp["Seasonality Tags"] = ""
+            st.session_state["seasonality_df"] = tmp
 
         edited_df = st.data_editor(
-            st.session_state[editor_key],
-            key=editor_key,
+            st.session_state["seasonality_df"],
+            key=widget_key,
             use_container_width=True,
             hide_index=True,
             num_rows="fixed",
@@ -188,6 +197,69 @@ if supplier_file is not None:
                 ),
             },
         )
+
+        # Persist immediately (this is allowed because key differs from widget_key)
+        st.session_state["seasonality_df"] = edited_df
+
+        style_season_map = {}
+        for _, r in edited_df.iterrows():
+            k = _clean_style_key(r.get(key_col, ""))
+            v = str(r.get("Seasonality Tags", "")).strip()
+            if k and v:
+                style_season_map[k] = v
+        st.markdown("#### Seasonality")
+
+        key_col = "Style Number" if "Style Number" in style_rows_df.columns else "Style Name"
+        style_rows_df = style_rows_df.sort_values(by=key_col).reset_index(drop=True)
+
+        supplier_fp = hashlib.md5(supplier_file.getvalue()).hexdigest()
+        styles_fp = hashlib.md5("|".join(style_rows_df[key_col].astype(str).tolist()).encode("utf-8")).hexdigest()
+        fp = f"{supplier_fp}:{styles_fp}:{key_col}"
+
+        # init only when file/styles change
+        if st.session_state.get("seasonality_fp") != fp:
+            st.session_state["seasonality_fp"] = fp
+
+            # reset widget state only on change
+            if "seasonality_editor" in st.session_state:
+                del st.session_state["seasonality_editor"]
+
+            prev = st.session_state.get("seasonality_df")
+            prev_map = {}
+            if prev is not None and key_col in prev.columns and "Seasonality Tags" in prev.columns:
+                prev_map = {
+                    _clean_style_key(k): str(v or "").strip()
+                    for k, v in zip(prev[key_col], prev["Seasonality Tags"])
+                    if _clean_style_key(k)
+                }
+
+            init_df = style_rows_df.copy()
+            init_df["Seasonality Tags"] = init_df[key_col].map(lambda k: prev_map.get(_clean_style_key(k), ""))
+            st.session_state["seasonality_df"] = init_df
+
+        # guard
+        if "seasonality_df" not in st.session_state or st.session_state["seasonality_df"] is None:
+            tmp = style_rows_df.copy()
+            tmp["Seasonality Tags"] = ""
+            st.session_state["seasonality_df"] = tmp
+
+        edited_df = st.data_editor(
+            st.session_state["seasonality_df"],
+            key="seasonality_editor",
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+            column_config={
+                "Style Name": st.column_config.TextColumn(disabled=True),
+                "Style Number": st.column_config.TextColumn(disabled=True),
+                "Seasonality Tags": st.column_config.TextColumn(
+                    help="Champ libre (ex: spring-summer, fall-winter, core, etc.)",
+                    required=False,
+                ),
+            },
+        )
+
+        st.session_state["seasonality_df"] = edited_df
 
         style_season_map = {}
         for _, r in edited_df.iterrows():
