@@ -747,6 +747,12 @@ def run_transform(
             tags.append(r["_vendor"])
         if r["_color_std"]:
             tags.append(r["_color_std"])
+        # Colour-based tags
+        if _norm(r["_color_std"]).lower() == "black":
+            tags.append("Core")
+        else:
+            tags.append("Seasonal")
+
         if r["_gender_std"]:
             tags.append(r["_gender_std"])
         tags.append("_badge_new")
@@ -938,10 +944,49 @@ def run_transform(
         "Category: ID",
     ]
 
+    def _apply_red_font_for_tags(buffer: io.BytesIO, sheet_name: str, rows_to_color_red: list[int]) -> io.BytesIO:
+        """Apply red font to the 'Tags' cell for given 0-based dataframe row indexes."""
+        buffer.seek(0)
+        wb = openpyxl.load_workbook(buffer)
+        if sheet_name not in wb.sheetnames:
+            return buffer
+        ws = wb[sheet_name]
+
+        # Find Tags column index from header row (row 1)
+        tags_col_idx = None
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(row=1, column=c).value
+            if str(v).strip() == "Tags":
+                tags_col_idx = c
+                break
+        if tags_col_idx is None:
+            return buffer
+
+        red_font = openpyxl.styles.Font(color="FFFF0000")
+
+        # Data rows start at Excel row 2
+        for df_i in rows_to_color_red:
+            excel_row = df_i + 2
+            cell = ws.cell(row=excel_row, column=tags_col_idx)
+            cell.font = red_font
+
+        out = io.BytesIO()
+        wb.save(out)
+        out.seek(0)
+        return out
+
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         out.to_excel(writer, index=False, sheet_name="shopify_import")
         pd.DataFrame(warnings).to_excel(writer, index=False, sheet_name="warnings")
+
+    # Red font for Tags when colour is NOT Black (i.e., Seasonal)
+    rows_to_color_red_cells = [
+        i
+        for i, c in enumerate(sup["_color_std"].astype(str).tolist())
+        if _norm(c) != "" and _norm(c).lower() != "black"
+    ]
+    buffer = _apply_red_font_for_tags(buffer, "shopify_import", rows_to_color_red_cells)
 
     buffer = _apply_yellow_for_empty(buffer, "shopify_import", yellow_if_empty_cols)
     return buffer.getvalue(), pd.DataFrame(warnings)
