@@ -1,9 +1,9 @@
 import streamlit as st
 import io
 import openpyxl
-import pandas as pd
 import time
 import hashlib
+import pandas as pd
 import re
 
 from suppliers.fournisseur_abc import run_transform as run_abc
@@ -59,28 +59,35 @@ supplier_file = st.file_uploader("Fichier fournisseur (.xlsx)", type=["xlsx"])
 help_file = st.file_uploader("Help data (.xlsx)", type=["xlsx"])
 
 
-# =========================
-# 3️⃣ Tags
-# =========================
-event_promo_tag = ""
-style_season_map = {}
+st.markdown("### 3️⃣ Tags")
 
-def _clean_style_key(v):
+event_promo_tag = st.selectbox(
+    "Event/Promotion Related",
+    options=["", "spring-summer", "fall-winter"],
+    index=0,
+)
+
+style_season_map: dict[str, str] = {}
+
+def _clean_style_key(v) -> str:
     s = " ".join(str(v or "").strip().split())
-    # If Excel treated an integer code as float, normalize '123.0' -> '123'
+    # if Excel treated numeric as float: 123.0 -> 123
     s = re.sub(r"^(\d+)\.0+$", r"\1", s)
     return s
 
-def _first_existing_col(cols, candidates):
+def _first_existing_col(cols: list[str], candidates: list[str]) -> str | None:
     cols_l = [c.lower() for c in cols]
     for c in candidates:
         if c.lower() in cols_l:
             return cols[cols_l.index(c.lower())]
     return None
 
-def _extract_unique_style_rows(xlsx_bytes):
-    """Extract unique styles for Seasonality tagging (per style).
-    Displays (when available) in this order: Style Name, Style Number.
+def _extract_unique_style_rows(xlsx_bytes: bytes) -> pd.DataFrame | None:
+    """Extract unique styles from the supplier file.
+
+    Returns a dataframe with columns (when available) in this order:
+      1) Style Name
+      2) Style Number
     """
     bio = io.BytesIO(xlsx_bytes)
     xls = pd.ExcelFile(bio)
@@ -92,7 +99,7 @@ def _extract_unique_style_rows(xlsx_bytes):
         "Style Name", "style name", "Product Name", "Name",
     ]
 
-    rows = []
+    rows: list[pd.DataFrame] = []
     for sheet in xls.sheet_names:
         try:
             df = pd.read_excel(xls, sheet_name=sheet)
@@ -134,51 +141,39 @@ def _extract_unique_style_rows(xlsx_bytes):
     return out[cols].reset_index(drop=True)
 
 if supplier_file is not None:
-    st.markdown("### 3️⃣ Tags")
-
-    # Event/Promotion Related (applies to entire file)
-    event_promo_tag = st.selectbox(
-        "Event/Promotion Related",
-        options=["", "spring-summer", "fall-winter"],
-        index=0,
-    )
-
-    # Seasonality per style (table with free-text)
     style_rows_df = _extract_unique_style_rows(supplier_file.getvalue())
     if style_rows_df is not None and not style_rows_df.empty:
         st.markdown("#### Seasonality")
 
         key_col = "Style Number" if "Style Number" in style_rows_df.columns else "Style Name"
-        # Stabilize ordering so the fingerprint doesn't change between reruns
         style_rows_df = style_rows_df.sort_values(by=key_col).reset_index(drop=True)
 
         supplier_fp = hashlib.md5(supplier_file.getvalue()).hexdigest()
         styles_fp = hashlib.md5("|".join(style_rows_df[key_col].astype(str).tolist()).encode("utf-8")).hexdigest()
         fp = f"{supplier_fp}:{styles_fp}:{key_col}"
-        editor_key = "seasonality_editor"
 
-        # Initialize ONLY when file/styles change (so typing doesn't get wiped)
+        # init only when file/styles change
         if st.session_state.get("seasonality_fp") != fp:
             st.session_state["seasonality_fp"] = fp
 
-        # Reset the editor widget state ONLY when the file/styles change
-        if "seasonality_editor" in st.session_state:
-            del st.session_state["seasonality_editor"]
+            # reset widget state only on change
+            if "seasonality_editor" in st.session_state:
+                del st.session_state["seasonality_editor"]
 
             prev = st.session_state.get("seasonality_df")
             prev_map = {}
             if prev is not None and key_col in prev.columns and "Seasonality Tags" in prev.columns:
                 prev_map = {
-                    str(k).strip(): str(v).strip()
-                    for k, v in zip(prev[key_col].astype(str), prev["Seasonality Tags"].astype(str))
-                    if str(k).strip()
+                    _clean_style_key(k): str(v or "").strip()
+                    for k, v in zip(prev[key_col], prev["Seasonality Tags"])
+                    if _clean_style_key(k)
                 }
 
             init_df = style_rows_df.copy()
-            init_df["Seasonality Tags"] = init_df[key_col].astype(str).map(lambda k: prev_map.get(str(k).strip(), ""))
+            init_df["Seasonality Tags"] = init_df[key_col].map(lambda k: prev_map.get(_clean_style_key(k), ""))
             st.session_state["seasonality_df"] = init_df
 
-        # IMPORTANT: always pass the same object from session_state to data_editor
+        # guard
         if "seasonality_df" not in st.session_state or st.session_state["seasonality_df"] is None:
             tmp = style_rows_df.copy()
             tmp["Seasonality Tags"] = ""
@@ -186,7 +181,7 @@ if supplier_file is not None:
 
         edited_df = st.data_editor(
             st.session_state["seasonality_df"],
-            key=editor_key,
+            key="seasonality_editor",
             use_container_width=True,
             hide_index=True,
             num_rows="fixed",
@@ -200,7 +195,6 @@ if supplier_file is not None:
             },
         )
 
-        # Persist immediately so it sticks on the first write
         st.session_state["seasonality_df"] = edited_df
 
         style_season_map = {}
@@ -247,7 +241,7 @@ if generate:
                 help_xlsx_bytes=help_file.getvalue(),
                 vendor_name=supplier_name,
                 brand_choice=brand_choice,  # toujours vide pour le pilote
-                event_promo_tag=event_promo_tag,
+                            event_promo_tag=event_promo_tag,
                 style_season_map=style_season_map,
             )
 
