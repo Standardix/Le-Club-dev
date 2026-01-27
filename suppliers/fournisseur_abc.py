@@ -1,4 +1,22 @@
+from __future__ import annotations
 
+import io
+import re
+import math
+
+import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill, Font
+
+# Optional dependency: python-slugify
+try:
+    from slugify import slugify  # type: ignore
+except Exception:
+    def slugify(value: str) -> str:
+        s = str(value or "").strip().lower()
+        s = re.sub(r"[^a-z0-9]+", "-", s)
+        s = re.sub(r"-{2,}", "-", s).strip("-")
+        return s
 
 def _build_existing_shopify_index(existing_shopify_xlsx_bytes: bytes | None):
     """Build matching indexes from an existing Shopify product export/list.
@@ -106,7 +124,6 @@ import re
 import math
 import pandas as pd
 import openpyxl
-from slugify import slugify
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font
 
