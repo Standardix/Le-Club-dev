@@ -87,7 +87,7 @@ def _first_existing_col(cols: list[str], candidates: list[str]) -> str | None:
             return cols[cols_l.index(c.lower())]
     return None
 
-def _extract_unique_style_rows(xlsx_bytes: bytes) -> pd.DataFrame | None:
+def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd.DataFrame | None:
     """Extract unique styles from the supplier file.
 
     Returns a dataframe with columns (when available) in this order:
@@ -97,21 +97,43 @@ def _extract_unique_style_rows(xlsx_bytes: bytes) -> pd.DataFrame | None:
     bio = io.BytesIO(xlsx_bytes)
     xls = pd.ExcelFile(bio)
 
+    # Prefer explicit style-number fields (avoid generic "Style" which can match a style-name field in some files)
     style_number_candidates = [
-        "Style Number", "Style Num", "Style #", "style number", "style #", "Style",
+        "Style NO", "Style No", "STYLE NO", "style no",
+        "Style Number", "Style Num", "Style #", "style number", "style #",
     ]
     style_name_candidates = [
-        "Style Name", "style name", "Product Name", "Name",
+        "STYLE NAME", "Style Name", "Style name", "style name",
+        "Product Name", "Name",
     ]
 
+    # Supplier-specific override: PAS Normal Studios uses only "Summary + Data"
+    sup_key = (supplier_name or "").strip().lower()
+    is_pas = sup_key.startswith("pas") or ("pas normal" in sup_key)
+    sheet_names = xls.sheet_names
+    if is_pas and "Summary + Data" in sheet_names:
+        sheet_names = ["Summary + Data"]
+
     rows: list[pd.DataFrame] = []
-    for sheet in xls.sheet_names:
+    for sheet in sheet_names:
         try:
             df = pd.read_excel(xls, sheet_name=sheet)
         except Exception:
             continue
         if df is None or df.empty:
             continue
+
+        # PAS: keep only rows with Order Qty >= 1 when extracting Seasonality styles
+        if is_pas:
+            oq_col = _first_existing_col(list(df.columns), ["Order Qty", "order qty", "Order Quantity", "order quantity"])
+            if oq_col:
+                qty_num = pd.to_numeric(
+                    df[oq_col].astype(str).str.replace(",", "", regex=False).str.strip(),
+                    errors="coerce",
+                ).fillna(0)
+                df = df.loc[qty_num >= 1].copy()
+                if df.empty:
+                    continue
 
         num_col = _first_existing_col(list(df.columns), style_number_candidates)
         name_col = _first_existing_col(list(df.columns), style_name_candidates)
@@ -146,7 +168,7 @@ def _extract_unique_style_rows(xlsx_bytes: bytes) -> pd.DataFrame | None:
     return out[cols].reset_index(drop=True)
 
 if supplier_file is not None:
-    style_rows_df = _extract_unique_style_rows(supplier_file.getvalue())
+    style_rows_df = _extract_unique_style_rows(supplier_file.getvalue(), supplier_name)
     if style_rows_df is not None and not style_rows_df.empty:
         st.markdown("#### Seasonality")
 
