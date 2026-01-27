@@ -1003,14 +1003,20 @@ def run_transform(
         sup["_grams"] = sup["_product_type"].apply(lambda pt: variant_weight_map.get(str(pt).strip().lower(), "") if pt else "")
 
     # Price
-    msrp_num = pd.to_numeric(
-        sup[msrp_col].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
-        errors="coerce",
-    )
-    sup["_price"] = msrp_num.apply(_round_to_nearest_9_99)
+    if detected_price_col is not None and _header_has_cad(detected_price_col):
+        price_num = pd.to_numeric(
+            sup[detected_price_col].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
+            errors="coerce",
+        )
+        sup["_price"] = price_num.apply(_round_to_nearest_9_99)
+    else:
+        sup["_price"] = ""
 
-    # Cost
-    sup["_cost"] = sup[landed_col].astype(str).fillna("").map(_norm) if landed_col else ""
+    # Cost (leave blank unless CAD column detected per rules)
+    if detected_cost_col is not None and _header_has_cad(detected_cost_col):
+        sup["_cost"] = sup[detected_cost_col].astype(str).fillna("").map(_norm)
+    else:
+        sup["_cost"] = ""
 
     # Size comment
     def _size_comment(r):
