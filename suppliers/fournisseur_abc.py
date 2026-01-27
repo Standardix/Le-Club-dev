@@ -1,6 +1,19 @@
 from __future__ import annotations
 
 
+def _norm_upc(v) -> str:
+    """Normalize UPC/Barcode: keep digits only, drop trailing .0 from numeric."""
+    if v is None:
+        return ""
+    s = str(v).strip()
+    # drop .0 for floats represented as '123.0'
+    s = re.sub(r"\.0$", "", s)
+    # keep digits only
+    s = re.sub(r"\D", "", s)
+    return s
+
+
+
 def _colkey(c: str) -> str:
     """Normalize column name: lower, remove spaces/punct/parentheses for robust matching."""
     s = str(c or "").strip().lower()
@@ -90,7 +103,7 @@ def _build_existing_shopify_index(existing_shopify_xlsx_bytes: bytes | None):
 
         brand = _norm(r.get(vendor_col, "")) if vendor_col else ""
         sku = _norm(r.get(sku_col, "")) if sku_col else ""
-        upc = _norm(r.get(upc_col, "")) if upc_col else ""
+        upc = _norm_upc(r.get(upc_col, "")) if upc_col else ""
 
         if brand and sku and upc:
             key_sets["brand_sku_upc"].add((brand, sku, upc))
@@ -109,7 +122,7 @@ def _build_existing_shopify_index(existing_shopify_xlsx_bytes: bytes | None):
 def _row_is_existing(brand: str, sku: str, upc: str, key_sets) -> bool:
     b = _norm(brand)
     s = _norm(sku)
-    u = _norm(upc)
+    u = _norm_upc(upc)
     if b and s and u and (b, s, u) in key_sets["brand_sku_upc"]:
         return True
     if b and u and (b, u) in key_sets["brand_upc"]:
@@ -819,16 +832,26 @@ def run_transform(
     desc_col = _first_existing_col(
         sup,
         [
-                        "Technical Specifications", "technical specifications",
-"description", "Description", "Product Name", "product name",
+            "Description", "description",
+            "Product Details", "product details",
+            "Technical Specifications", "technical specifications",
+            "Product Name", "product name",
             "Title", "title", "Style", "style", "Style Name", "style name",
             "Display Name", "display name", "Online Display Name", "online display name",
         ],
     )
+
+    # If we picked Technical Specifications but it is mostly empty, fallback to Description when available.
+    desc_col_fallback = _first_existing_col(sup, ["Description", "description"])
+    if desc_col and _colkey(desc_col) in ("technicalspecifications", "technicalspecification") and desc_col_fallback:
+        non_empty_ratio = sup[desc_col].astype(str).fillna("").str.strip().ne("").mean() if len(sup) else 0
+        if non_empty_ratio < 0.2:
+            desc_col = desc_col_fallback
+
     product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
     color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code"])
     size_col = _first_existing_col(sup, ["Size", "size", "Vendor Size1", "vendor size1"])
-    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "upc", "upc code"])
+    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
     origin_col = _first_existing_col(sup, ["Country Code", "Origin", "Manufacturing Country", "COO", "country code", "origin", "manufacturing country", "coo"])
     hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code"])
     extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
