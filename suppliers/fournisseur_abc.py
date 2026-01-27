@@ -120,14 +120,21 @@ def _build_existing_shopify_index(existing_shopify_xlsx_bytes: bytes | None):
 
 
 def _row_is_existing(brand: str, sku: str, upc: str, key_sets) -> bool:
+    """Return True if a row already exists in Shopify.
+
+    IMPORTANT CHANGE (to avoid over-filtering):
+    - We ONLY consider keys that include a UPC/GTIN.
+    - We DO NOT classify as existing based on (brand + SKU) alone.
+      (That rule can incorrectly move an entire ordersheet to "do not import".)
+    """
     b = _norm(brand)
     s = _norm(sku)
     u = _norm_upc(upc)
+
+    # Strongest matches (include UPC)
     if b and s and u and (b, s, u) in key_sets["brand_sku_upc"]:
         return True
     if b and u and (b, u) in key_sets["brand_upc"]:
-        return True
-    if b and s and (b, s) in key_sets["brand_sku"]:
         return True
     if s and u and (s, u) in key_sets["sku_upc"]:
         return True
