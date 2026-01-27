@@ -1116,64 +1116,64 @@ def run_transform(
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
 
-# Split into "products" and "do not import" based on existing Shopify file (if provided)
-existing_handles_set, existing_key_sets = _build_existing_shopify_index(existing_shopify_xlsx_bytes)
+        # Split into "products" and "do not import" based on existing Shopify file (if provided)
+        existing_handles_set, existing_key_sets = _build_existing_shopify_index(existing_shopify_xlsx_bytes)
 
-# columns expected in output
-vendor_col = "Vendor" if "Vendor" in out.columns else None
-sku_col = "Variant SKU" if "Variant SKU" in out.columns else ("SKU" if "SKU" in out.columns else None)
-upc_col = "Variant Barcode" if "Variant Barcode" in out.columns else ("Barcode" if "Barcode" in out.columns else ("UPC" if "UPC" in out.columns else None))
+        # columns expected in output
+        vendor_col = "Vendor" if "Vendor" in out.columns else None
+        sku_col = "Variant SKU" if "Variant SKU" in out.columns else ("SKU" if "SKU" in out.columns else None)
+        upc_col = "Variant Barcode" if "Variant Barcode" in out.columns else ("Barcode" if "Barcode" in out.columns else ("UPC" if "UPC" in out.columns else None))
 
-def _getcol(r, c):
-    return r.get(c, "") if c else ""
+        def _getcol(r, c):
+            return r.get(c, "") if c else ""
 
-mask_existing = []
-for _, r in out.iterrows():
-    brand = _getcol(r, vendor_col) or vendor_name
-    sku = _getcol(r, sku_col)
-    upc = _getcol(r, upc_col)
-    mask_existing.append(_row_is_existing(str(brand), str(sku), str(upc), existing_key_sets))
+        mask_existing = []
+        for _, r in out.iterrows():
+            brand = _getcol(r, vendor_col) or vendor_name
+            sku = _getcol(r, sku_col)
+            upc = _getcol(r, upc_col)
+            mask_existing.append(_row_is_existing(str(brand), str(sku), str(upc), existing_key_sets))
 
-mask_existing = pd.Series(mask_existing, index=out.index)
+        mask_existing = pd.Series(mask_existing, index=out.index)
 
-products_df = out.loc[~mask_existing].copy()
-do_not_import_df = out.loc[mask_existing].copy()
+        products_df = out.loc[~mask_existing].copy()
+        do_not_import_df = out.loc[mask_existing].copy()
 
-products_df.to_excel(writer, index=False, sheet_name="products")
-do_not_import_df.to_excel(writer, index=False, sheet_name="do not import")
-pd.DataFrame(warnings).to_excel(writer, index=False, sheet_name="warnings")
+        products_df.to_excel(writer, index=False, sheet_name="products")
+        do_not_import_df.to_excel(writer, index=False, sheet_name="do not import")
+        pd.DataFrame(warnings).to_excel(writer, index=False, sheet_name="warnings")
 
     
-# Red font for Tags when colour is NOT Black (i.e., Seasonal) — apply on both sheets
-existing_handles_set, existing_key_sets = _build_existing_shopify_index(existing_shopify_xlsx_bytes)
+    # Red font for Tags when colour is NOT Black (i.e., Seasonal) — apply on both sheets
+    existing_handles_set, existing_key_sets = _build_existing_shopify_index(existing_shopify_xlsx_bytes)
 
-def _rows_to_color_for_df(df_slice: pd.DataFrame) -> list[int]:
-    if "_color_std" not in df_slice.columns:
-        return []
-    return [
-        i
-        for i, c in enumerate(df_slice["_color_std"].astype(str).tolist())
-        if _norm(c) != "" and _norm(c).lower() != "black"
-    ]
+    def _rows_to_color_for_df(df_slice: pd.DataFrame) -> list[int]:
+        if "_color_std" not in df_slice.columns:
+            return []
+        return [
+            i
+            for i, c in enumerate(df_slice["_color_std"].astype(str).tolist())
+            if _norm(c) != "" and _norm(c).lower() != "black"
+        ]
 
-# For handle red: when output handle already exists in Shopify
-def _rows_handle_conflict(df_slice: pd.DataFrame) -> list[int]:
-    if "Handle" not in df_slice.columns:
-        return []
-    return [i for i, h in enumerate(df_slice["Handle"].astype(str).tolist()) if _norm(h) in existing_handles_set and _norm(h) != ""]
+    # For handle red: when output handle already exists in Shopify
+    def _rows_handle_conflict(df_slice: pd.DataFrame) -> list[int]:
+        if "Handle" not in df_slice.columns:
+            return []
+        return [i for i, h in enumerate(df_slice["Handle"].astype(str).tolist()) if _norm(h) in existing_handles_set and _norm(h) != ""]
 
-# Reload workbook buffer as BytesIO for styling helpers
-buffer.seek(0)
+    # Reload workbook buffer as BytesIO for styling helpers
+    buffer.seek(0)
 
-# Apply tag red and yellow empty on each sheet
-buffer = _apply_red_font_for_tags(buffer, "products", _rows_to_color_for_df(products_df))
-buffer = _apply_red_font_for_tags(buffer, "do not import", _rows_to_color_for_df(do_not_import_df))
+    # Apply tag red and yellow empty on each sheet
+    buffer = _apply_red_font_for_tags(buffer, "products", _rows_to_color_for_df(products_df))
+    buffer = _apply_red_font_for_tags(buffer, "do not import", _rows_to_color_for_df(do_not_import_df))
 
-buffer = _apply_yellow_for_empty(buffer, "products", yellow_if_empty_cols)
-buffer = _apply_yellow_for_empty(buffer, "do not import", yellow_if_empty_cols)
+    buffer = _apply_yellow_for_empty(buffer, "products", yellow_if_empty_cols)
+    buffer = _apply_yellow_for_empty(buffer, "do not import", yellow_if_empty_cols)
 
-# Apply red font for handle conflicts (only the cell in Handle column)
-buffer = _apply_red_font_for_handle(buffer, "products", _rows_handle_conflict(products_df))
-buffer = _apply_red_font_for_handle(buffer, "do not import", _rows_handle_conflict(do_not_import_df))
+    # Apply red font for handle conflicts (only the cell in Handle column)
+    buffer = _apply_red_font_for_handle(buffer, "products", _rows_handle_conflict(products_df))
+    buffer = _apply_red_font_for_handle(buffer, "do not import", _rows_handle_conflict(do_not_import_df))
 
-return buffer.getvalue(), pd.DataFrame(warnings)
+    return buffer.getvalue(), pd.DataFrame(warnings)
