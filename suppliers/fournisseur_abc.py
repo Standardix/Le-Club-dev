@@ -712,33 +712,28 @@ def run_transform(
         dfs: list[pd.DataFrame] = []
         for sn in xls.sheet_names:
             df = pd.read_excel(io.BytesIO(xlsx_bytes), sheet_name=sn, dtype=str)
+            # --- Price columns (robust) ---
+            cost_col = _find_col(df.columns, [
+                "Wholesale CAD", "Wholesale (CAD)", "CAD Wholesale", "WholesaleCAD", "wholesale cad"
+            ])
+            price_col = _find_col(df.columns, [
+                "Retail CAD", "Retail (CAD)", "CAD Retail", "RetailCAD", "retail cad"
+            ])
 
+            # Legacy MSRP-like columns (optional)
+            msrp_col = _find_col(df.columns, [
+                "Retail Price (CAD)", "Cad MSRP", "MSRP", "msrp"
+            ])
 
-                    # --- Price columns (robust) ---
-                    cost_col = _find_col(df.columns, [
-                        "Wholesale CAD", "Wholesale (CAD)", "CAD Wholesale", "WholesaleCAD", "wholesale cad"
-                    ])
-                    price_col = _find_col(df.columns, [
-                        "Retail CAD", "Retail (CAD)", "CAD Retail", "RetailCAD", "retail cad"
-                    ])
+            # Prefer explicit Norda CAD columns
+            detected_cost_col = cost_col if cost_col else None
+            if price_col:
+                detected_price_col = price_col
+            elif msrp_col:
+                detected_price_col = msrp_col
+            else:
+                detected_price_col = None
 
-                    # Legacy MSRP-like columns (optional)
-                    msrp_col = _find_col(df.columns, [
-                        "Retail Price (CAD)", "Cad MSRP", "MSRP", "msrp"
-                    ])
-
-                    # Prefer explicit Norda CAD columns
-                    if cost_col:
-                        detected_cost_col = cost_col
-                    else:
-                        detected_cost_col = None
-
-                    if price_col:
-                        detected_price_col = price_col
-                    elif msrp_col:
-                        detected_price_col = msrp_col
-                    else:
-                        detected_price_col = None
             # Drop fully empty rows early
             if df is None or df.empty:
                 warnings.append({
