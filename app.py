@@ -1,3 +1,4 @@
+from openpyxl.styles import Font
 import streamlit as st
 import io
 import openpyxl
