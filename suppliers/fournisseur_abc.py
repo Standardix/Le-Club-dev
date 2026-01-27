@@ -663,7 +663,7 @@ def run_transform(
         """
         Reads supplier XLSX.
         - If there are multiple sheets, keep only sheets that contain the minimum required columns
-          (Description-like + MSRP-like), then concatenate.
+          (Description-like), then concatenate.
         - If there is a single valid sheet, behaves like the previous implementation.
         """
         bio = io.BytesIO(xlsx_bytes)
@@ -703,7 +703,7 @@ def run_transform(
             # Validate minimum required columns
             has_desc = _first_existing_col(df, desc_candidates) is not None
             has_msrp = _first_existing_col(df, msrp_candidates) is not None
-            if not (has_desc and has_msrp):
+            if not has_desc:
                 warnings.append({
                     "type": "sheet_skipped",
                     "sheet": sn,
@@ -718,7 +718,7 @@ def run_transform(
 
         if not dfs:
             raise ValueError(
-                "Aucun onglet valide détecté dans le fichier fournisseur (colonne Description + MSRP requises)."
+                "Aucun onglet valide détecté dans le fichier fournisseur (colonne Description requise)."
             )
         return pd.concat(dfs, ignore_index=True, sort=False)
 
