@@ -899,22 +899,25 @@ def run_transform(
             "rows_removed": before - after,
         })
 
-    # Base description
-    sup["_desc_raw"] = sup[desc_col].astype(str).fillna("").map(_norm)
+    
+    # Base description (keep both a normalized version and the original source text)
+    sup["_desc_source"] = sup[desc_col].astype(str).fillna("")  # preserve original (length, punctuation, line breaks)
+    sup["_desc_raw"] = sup["_desc_source"].map(_norm)
     sup["_desc_seo"] = sup["_desc_raw"].apply(_convert_r_to_registered)
     sup["_desc_handle"] = sup["_desc_raw"].apply(_strip_reg_for_handle)
 
     # -----------------------------------------------------
     # Long description rule:
-    # If the source description text is > 200 chars, move it to Body (HTML)
+    # If the SOURCE description text is > 200 chars, move it to Body (HTML)
     # and build Title from Style Name / Name instead of the long description.
     # -----------------------------------------------------
     title_name_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style"])
     sup["_title_name_raw"] = sup[title_name_col].astype(str).fillna("").map(_norm) if title_name_col else ""
-    sup["_desc_is_long"] = sup["_desc_raw"].apply(lambda x: len(str(x)) > 200)
-    sup["_body_html"] = sup.apply(lambda r: r["_desc_seo"] if r["_desc_is_long"] else "", axis=1)
 
+    sup["_desc_is_long"] = sup["_desc_source"].apply(lambda x: len(str(x)) > 200)
 
+    # Put the original description in Body (HTML) when long (not the normalized one)
+    sup["_body_html"] = sup.apply(lambda r: str(r["_desc_source"]).strip() if r["_desc_is_long"] else "", axis=1)
     # Color / Size input
     sup["_color_raw"] = sup[color_col].astype(str).fillna("").map(_norm) if color_col else ""
     sup["_size_raw"] = sup[size_col].astype(str).fillna("").map(_norm) if size_col else ""
