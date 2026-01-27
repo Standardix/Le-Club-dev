@@ -97,7 +97,7 @@ def _build_existing_shopify_index(existing_shopify_xlsx_bytes: bytes | None):
     upc_col = cols_l.get("variant barcode") or cols_l.get("barcode") or cols_l.get("upc")
 
     for _, r in df.iterrows():
-        h = _norm(r.get(handle_col, "")) if handle_col else ""
+        h = _norm_handle(r.get(handle_col, "")) if handle_col else ""
         if h:
             handles_set.add(h)
 
@@ -228,6 +228,13 @@ SHOPIFY_OUTPUT_COLUMNS = [
 # ---------------------------------------------------------
 def _norm(s) -> str:
     return re.sub(r"\s+", " ", str(s or "").strip())
+
+
+def _norm_handle(v) -> str:
+    s = str(v or "").strip().lower()
+    # collapse whitespace
+    s = re.sub(r"\s+", "", s)
+    return s
 
 
 def _strip_gender_prefix_size(v: str) -> str:
@@ -1351,8 +1358,14 @@ def run_transform(
 
     # For handle red: when output handle already exists in Shopify
     def _rows_handle_conflict(df_slice: pd.DataFrame) -> list[int]:
+        """Rows where Handle conflicts with an existing Shopify handle OR duplicates within the slice."""
         if "Handle" not in df_slice.columns:
             return []
+        handles_norm = df_slice["Handle"].apply(_norm_handle)
+        existing_mask = handles_norm.isin(existing_handles_set)
+        dup_mask = handles_norm.duplicated(keep=False) & handles_norm.ne("")
+        mask = (existing_mask | dup_mask) & handles_norm.ne("")
+        return [i for i, v in enumerate(mask.tolist()) if v]
         return [i for i, h in enumerate(df_slice["Handle"].astype(str).tolist()) if _norm(h) in existing_handles_set and _norm(h) != ""]
 
     # Reload workbook buffer as BytesIO for styling helpers
