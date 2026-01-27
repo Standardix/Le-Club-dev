@@ -539,6 +539,7 @@ def run_transform(
     brand_choice: str = "",
     event_promo_tag: str = "",
     style_season_map: dict[str, str] | None = None,
+    existing_shopify_xlsx_bytes: bytes | None = None,
 ):
     warnings: list[dict] = []
 
@@ -1054,18 +1055,172 @@ def run_transform(
         out.seek(0)
         return out
 
+    def _load_existing_shopify_keys(existing_xlsx_bytes: bytes | None):
+        """Return lookup sets for existing Shopify products export."""
+        empty = (set(), set(), set(), set(), set(), set())
+        if not existing_xlsx_bytes:
+            return empty
+
+        try:
+            df = pd.read_excel(io.BytesIO(existing_xlsx_bytes), sheet_name=0)
+        except Exception:
+            # try common sheet name
+            try:
+                df = pd.read_excel(io.BytesIO(existing_xlsx_bytes), sheet_name="Products")
+            except Exception:
+                return empty
+
+        # normalize column names
+        col_map = {c.lower().strip(): c for c in df.columns}
+        def _col(*names):
+            for n in names:
+                key = n.lower().strip()
+                if key in col_map:
+                    return col_map[key]
+            return None
+
+        c_vendor = _col("Vendor")
+        c_sku = _col("Variant SKU", "SKU")
+        c_upc = _col("Variant Barcode", "Barcode", "UPC")
+        c_handle = _col("Handle")
+
+        def _norm_key(x):
+            s = str(x or "").strip()
+            s = re.sub(r"^(\d+)\.0+$", r"\1", s)
+            return s
+
+        # Build sets for matching priority keys
+        s_brand_sku_upc = set()
+        s_brand_upc = set()
+        s_brand_sku = set()
+        s_sku_upc = set()
+        s_upc = set()
+        s_handles = set()
+
+        for _, r in df.iterrows():
+            brand = _norm_key(r.get(c_vendor) if c_vendor else "")
+            sku = _norm_key(r.get(c_sku) if c_sku else "")
+            upc = _norm_key(r.get(c_upc) if c_upc else "")
+            handle = _norm_key(r.get(c_handle) if c_handle else "")
+
+            if handle:
+                s_handles.add(handle)
+
+            if brand and sku and upc:
+                s_brand_sku_upc.add((brand, sku, upc))
+            if brand and upc:
+                s_brand_upc.add((brand, upc))
+            if brand and sku:
+                s_brand_sku.add((brand, sku))
+            if sku and upc:
+                s_sku_upc.add((sku, upc))
+            if upc:
+                s_upc.add(upc)
+
+        return (s_brand_sku_upc, s_brand_upc, s_brand_sku, s_sku_upc, s_upc, s_handles)
+
+
+    def _split_products_do_not_import(out_df: pd.DataFrame, existing_sets):
+        s_brand_sku_upc, s_brand_upc, s_brand_sku, s_sku_upc, s_upc, _ = existing_sets
+
+        def _norm_key(x):
+            s = str(x or "").strip()
+            s = re.sub(r"^(\d+)\.0+$", r"\1", s)
+            return s
+
+        do_not = []
+        products = []
+
+        for i, r in out_df.iterrows():
+            brand = _norm_key(r.get("Vendor"))
+            sku = _norm_key(r.get("Variant SKU"))
+            upc = _norm_key(r.get("Variant Barcode"))
+
+            found = False
+            if brand and sku and upc and (brand, sku, upc) in s_brand_sku_upc:
+                found = True
+            elif brand and upc and (brand, upc) in s_brand_upc:
+                found = True
+            elif brand and sku and (brand, sku) in s_brand_sku:
+                found = True
+            elif sku and upc and (sku, upc) in s_sku_upc:
+                found = True
+            elif upc and upc in s_upc:
+                found = True
+
+            (do_not if found else products).append(i)
+
+        return out_df.loc[products].copy(), out_df.loc[do_not].copy()
+
+
+    def _apply_red_font_for_handle(buffer: io.BytesIO, sheet_name: str, rows_to_color_red: list[int]):
+        wb = openpyxl.load_workbook(buffer)
+        ws = wb[sheet_name]
+
+        # find handle column
+        handle_col_idx = None
+        for c in range(1, ws.max_column + 1):
+            if str(ws.cell(row=1, column=c).value).strip().lower() == "handle":
+                handle_col_idx = c
+                break
+        if handle_col_idx is None:
+            out = io.BytesIO()
+            wb.save(out)
+            out.seek(0)
+            return out
+
+        red_font = Font(color="FFFF0000")
+
+        for df_i in rows_to_color_red:
+            excel_row = df_i + 2
+            cell = ws.cell(row=excel_row, column=handle_col_idx)
+            cell.font = red_font
+
+        out = io.BytesIO()
+        wb.save(out)
+        out.seek(0)
+        return out
+    existing_sets = _load_existing_shopify_keys(existing_shopify_xlsx_bytes)
+    products_df, do_not_df = _split_products_do_not_import(out, existing_sets)
+
+    # Map "Seasonal" rows (colour != Black) from original sup index -> flag
+    seasonal_flag_by_idx = {
+        i: (_norm(c) != "" and _norm(c).lower() != "black")
+        for i, c in enumerate(sup["_color_std"].astype(str).tolist())
+    }
+
+    def _rows_to_color_red_for_df(df_part: pd.DataFrame) -> list[int]:
+        return [pos for pos, idx in enumerate(df_part.index.tolist()) if seasonal_flag_by_idx.get(int(idx), False)]
+
+    def _rows_to_color_red_handle_for_df(df_part: pd.DataFrame, handles_set: set[str]) -> list[int]:
+        def _norm_key(x):
+            s = str(x or "").strip()
+            s = re.sub(r"^(\d+)\.0+$", r"\1", s)
+            return s
+        return [pos for pos, h in enumerate(df_part["Handle"].astype(str).tolist()) if _norm_key(h) in handles_set]
+
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        out.to_excel(writer, index=False, sheet_name="shopify_import")
-        pd.DataFrame(warnings).to_excel(writer, index=False, sheet_name="warnings")
+        products_df.to_excel(writer, index=False, sheet_name="products")
+        do_not_df.to_excel(writer, index=False, sheet_name="do not import")
 
-    # Red font for Tags when colour is NOT Black (i.e., Seasonal)
-    rows_to_color_red_cells = [
-        i
-        for i, c in enumerate(sup["_color_std"].astype(str).tolist())
-        if _norm(c) != "" and _norm(c).lower() != "black"
-    ]
-    buffer = _apply_red_font_for_tags(buffer, "shopify_import", rows_to_color_red_cells)
+    # Apply red font for Tags (Seasonal) on both sheets
+    rows_red_products = _rows_to_color_red_for_df(products_df)
+    rows_red_do_not = _rows_to_color_red_for_df(do_not_df)
+    buffer = _apply_red_font_for_tags(buffer, "products", rows_red_products)
+    buffer = _apply_red_font_for_tags(buffer, "do not import", rows_red_do_not)
 
-    buffer = _apply_yellow_for_empty(buffer, "shopify_import", yellow_if_empty_cols)
+    # Apply yellow fill for required-but-empty cells (both sheets)
+    buffer = _apply_yellow_for_empty(buffer, "products", yellow_if_empty_cols)
+    buffer = _apply_yellow_for_empty(buffer, "do not import", yellow_if_empty_cols)
+
+    # Highlight Handle in red if it already exists in the provided Shopify product list
+    existing_handles = existing_sets[5] if existing_sets else set()
+    if existing_handles:
+        rows_handle_red_products = _rows_to_color_red_handle_for_df(products_df, existing_handles)
+        rows_handle_red_do_not = _rows_to_color_red_handle_for_df(do_not_df, existing_handles)
+        buffer = _apply_red_font_for_handle(buffer, "products", rows_handle_red_products)
+        buffer = _apply_red_font_for_handle(buffer, "do not import", rows_handle_red_do_not)
+
     return buffer.getvalue(), pd.DataFrame(warnings)
+
