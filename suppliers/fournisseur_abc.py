@@ -1358,13 +1358,11 @@ def run_transform(
 
     # For handle red: when output handle already exists in Shopify
     def _rows_handle_conflict(df_slice: pd.DataFrame) -> list[int]:
-        """Rows where Handle conflicts with an existing Shopify handle OR duplicates within the slice."""
+        """Rows where Handle conflicts with an existing Shopify handle."""
         if "Handle" not in df_slice.columns:
             return []
         handles_norm = df_slice["Handle"].apply(_norm_handle)
-        existing_mask = handles_norm.isin(existing_handles_set)
-        dup_mask = handles_norm.duplicated(keep=False) & handles_norm.ne("")
-        mask = (existing_mask | dup_mask) & handles_norm.ne("")
+        mask = handles_norm.isin(existing_handles_set) & handles_norm.ne("")
         return [i for i, v in enumerate(mask.tolist()) if v]
         return [i for i, h in enumerate(df_slice["Handle"].astype(str).tolist()) if _norm(h) in existing_handles_set and _norm(h) != ""]
 
