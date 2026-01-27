@@ -1,4 +1,3 @@
-from openpyxl.styles import Font
 import streamlit as st
 import io
 import openpyxl
@@ -48,8 +47,12 @@ SUPPLIERS = {
     "District Vision": run_abc,
     "Fingerscrossed": run_abc,
     "MAAP": run_abc,
+    "norda": run_abc,
     "Pas Normal Studios": run_abc,
+    "Rapha": run_abc,
+    "Soar": run_abc,
     "Tracksmith": run_abc,
+    
 }
 
 st.markdown("### 1️⃣ Sélection du fournisseur")
@@ -58,7 +61,6 @@ supplier_name = st.selectbox("Choisir le fournisseur", list(SUPPLIERS.keys()))
 st.markdown("### 2️⃣ Upload des fichiers")
 supplier_file = st.file_uploader("Fichier fournisseur (.xlsx)", type=["xlsx"])
 help_file = st.file_uploader("Help data (.xlsx)", type=["xlsx"])
-existing_shopify_file = st.file_uploader("Fichier de produits existant dans Shopify (.xlsx)", type=["xlsx"])
 
 
 st.markdown("### 3️⃣ Tags")
@@ -278,7 +280,6 @@ if generate:
                 brand_choice=brand_choice,  # toujours vide pour le pilote
                             event_promo_tag=event_promo_tag,
                 style_season_map=style_season_map,
-                existing_shopify_xlsx_bytes=(existing_shopify_file.getvalue() if existing_shopify_file else None),
             )
 
         status.info("Finalisation du fichier Shopify…")
