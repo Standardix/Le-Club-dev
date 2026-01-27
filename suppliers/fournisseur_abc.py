@@ -681,6 +681,9 @@ def run_transform(
     style_season_map: dict[str, str] | None = None,
     existing_shopify_xlsx_bytes: bytes | None = None,
 ):
+    # Defensive defaults (avoid NameError when price columns absent)
+    detected_cost_col = None
+    detected_price_col = None
     warnings: list[dict] = []
 
     style_season_map = style_season_map or {}
