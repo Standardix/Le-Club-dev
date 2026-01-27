@@ -1,5 +1,35 @@
 from __future__ import annotations
 
+
+def _colkey(c: str) -> str:
+    """Normalize column name: lower, remove spaces/punct/parentheses for robust matching."""
+    s = str(c or "").strip().lower()
+    s = re.sub(r"[\s\-_/]+", "", s)
+    s = s.replace("(", "").replace(")", "")
+    return s
+
+def _find_col(df_cols, candidates):
+    """Return first column in df_cols matching any normalized candidate."""
+    norm_map = {_colkey(c): c for c in df_cols}
+    for cand in candidates:
+        k = _colkey(cand)
+        if k in norm_map:
+            return norm_map[k]
+    # also allow partial contains on normalized
+    cols_norm = [(_colkey(c), c) for c in df_cols]
+    for cand in candidates:
+        ck = _colkey(cand)
+        for cn, orig in cols_norm:
+            if ck and ck in cn:
+                return orig
+    return None
+
+
+def _header_has_cad(col_name: str) -> bool:
+    return "cad" in str(col_name or "").lower()
+
+
+
 import io
 import re
 import math
@@ -683,6 +713,32 @@ def run_transform(
         for sn in xls.sheet_names:
             df = pd.read_excel(io.BytesIO(xlsx_bytes), sheet_name=sn, dtype=str)
 
+
+                    # --- Price columns (robust) ---
+                    cost_col = _find_col(df.columns, [
+                        "Wholesale CAD", "Wholesale (CAD)", "CAD Wholesale", "WholesaleCAD", "wholesale cad"
+                    ])
+                    price_col = _find_col(df.columns, [
+                        "Retail CAD", "Retail (CAD)", "CAD Retail", "RetailCAD", "retail cad"
+                    ])
+
+                    # Legacy MSRP-like columns (optional)
+                    msrp_col = _find_col(df.columns, [
+                        "Retail Price (CAD)", "Cad MSRP", "MSRP", "msrp"
+                    ])
+
+                    # Prefer explicit Norda CAD columns
+                    if cost_col:
+                        detected_cost_col = cost_col
+                    else:
+                        detected_cost_col = None
+
+                    if price_col:
+                        detected_price_col = price_col
+                    elif msrp_col:
+                        detected_price_col = msrp_col
+                    else:
+                        detected_price_col = None
             # Drop fully empty rows early
             if df is None or df.empty:
                 warnings.append({
@@ -772,9 +828,7 @@ def run_transform(
             "Colonne Description introuvable. Colonnes acceptées: Description, Style, Style Name, Product Name, Title, Display Name, Online Display Name."
         )
     if msrp_col is None:
-        raise ValueError(
-            "Colonne MSRP introuvable. Colonnes acceptées: Retail Price (CAD), Cad MSRP, MSRP."
-        )
+        msrp_col = None  # MSRP not found; leave prices blank per rules
 
     # -----------------------------------------------------
     # De-duplicate across sheets (SKU and/or UPC)
