@@ -661,25 +661,43 @@ def _round_to_nearest_9_99(price) -> float:
 
 
 def _barcode_keep_zeros(x) -> str:
+    """Normalize barcode/UPC/EAN.
+    - Keep digits only when the value is numeric.
+    - Preserve leading zeros for UPC (pad to 12 when length <= 12).
+    - Accept EAN/other barcodes up to 16 digits (kept as-is, no padding).
+    """
     if x is None:
         return ""
     s = str(x).strip()
     if s == "" or s.lower() == "nan":
         return ""
+    # Excel floats like 123.0
     if re.fullmatch(r"\d+\.0", s):
         s = s[:-2]
-    if re.fullmatch(r"\d+", s):
-        return s.zfill(12) if len(s) <= 12 else s
-    return s
+
+    # Keep digits only if it's mostly numeric
+    digits = re.sub(r"\D", "", s)
+    if digits == "":
+        return s
+
+    if len(digits) <= 12:
+        return digits.zfill(12)
+    if len(digits) <= 16:
+        return digits
+    return digits[:16]
 
 
 def _hs_code_clean(x) -> str:
+    """Clean HS/HTS code and keep only the first 6 characters (no dots)."""
     if x is None:
         return ""
     s = str(x).strip()
     if s == "" or s.lower() == "nan":
         return ""
-    return re.sub(r"\.0$", "", s)
+    s = re.sub(r"\.0$", "", s)
+    # Remove separators (dots/spaces/etc.)
+    s = re.sub(r"[^0-9A-Za-z]", "", s)
+    return s[:6]
 
 
 # ---------------------------------------------------------
@@ -727,6 +745,7 @@ def run_transform(
     warnings: list[dict] = []
 
     style_season_map = style_season_map or {}
+    vendor_key = _colkey(vendor_name)
     style_season_map = { _clean_style_key(k): v for k, v in style_season_map.items() }
 
     # -----------------------------------------------------
@@ -741,6 +760,19 @@ def run_transform(
         """
         bio = io.BytesIO(xlsx_bytes)
         xls = pd.ExcelFile(bio)
+
+        # Supplier-specific override: PAS Normal Studios uses only "Summary + Data"
+        vendor_key = _colkey(vendor_name)
+        if vendor_key in ("pasnormalstudios", "pasnormalstudio"):
+            target_sheet = "Summary + Data"
+            if target_sheet in xls.sheet_names:
+                df = pd.read_excel(io.BytesIO(xlsx_bytes), sheet_name=target_sheet, dtype=str)
+                df = df.dropna(how="all")
+                if df is None or df.empty:
+                    raise ValueError('Onglet "Summary + Data" vide dans le fichier fournisseur.')
+                df["_source_sheet"] = target_sheet
+                return df
+
 
         # Column candidates duplicated from the main logic (kept local to avoid refactors).
         desc_candidates = [
@@ -819,6 +851,20 @@ def run_transform(
 
     sup = _read_supplier_multi_sheet(supplier_xlsx_bytes).copy()
 
+    # PAS Normal Studios: keep only rows with Order Qty >= 1 (from "Summary + Data")
+    if vendor_key in ("pasnormalstudios", "pasnormalstudio"):
+        order_qty_col = _first_existing_col(sup, ["Order Qty", "order qty", "Order Quantity", "order quantity"])
+        if order_qty_col:
+            qty_num = pd.to_numeric(sup[order_qty_col].astype(str).str.replace(",", "", regex=False).str.strip(), errors="coerce").fillna(0)
+            before_n = len(sup)
+            sup = sup.loc[qty_num >= 1].copy()
+            after_n = len(sup)
+            if after_n < before_n:
+                warnings.append({"type": "rows_filtered", "reason": "Order Qty < 1", "removed": before_n - after_n})
+        else:
+            warnings.append({"type": "missing_column", "column": "Order Qty", "vendor": vendor_name})
+
+
 
     # -----------------------------------------------------
     # Detect price columns on the concatenated supplier dataframe
@@ -860,6 +906,7 @@ def run_transform(
         sup,
         [
             "Description", "description",
+            "Style Description", "style description",
             "Product Details", "product details",
             "Technical Specifications", "technical specifications",
             "Product Name", "product name",
@@ -878,9 +925,10 @@ def run_transform(
     product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
     color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code"])
     size_col = _first_existing_col(sup, ["Size 1","Size1","Size", "size", "Vendor Size1", "vendor size1"])
-    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
+    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
+    ean_col = _first_existing_col(sup, ["EAN", "EAN Code", "ean", "ean code"])
     origin_col = _first_existing_col(sup, ["Country Code", "Origin", "Manufacturing Country", "COO", "country code", "origin", "manufacturing country", "coo"])
-    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code"])
+    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "custom tariff code (no dots)", "custom tariff code", "tariff code"])
     extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
     msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)"])
     landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
@@ -1107,7 +1155,11 @@ def run_transform(
     sup["_variant_sku"] = sup.apply(_make_sku, axis=1)
 
     # Barcode
+    # Barcode (UPC/EAN → Variant Barcode)
     sup["_barcode"] = sup[upc_col].apply(_barcode_keep_zeros) if upc_col else ""
+    if ean_col:
+        ean_series = sup[ean_col].apply(_barcode_keep_zeros)
+        sup["_barcode"] = sup["_barcode"].where(sup["_barcode"].astype(str).str.strip().ne(""), ean_series)
 
     # Country (standardize)
     sup["_origin_raw"] = sup[origin_col].astype(str).fillna("").map(_norm) if origin_col else ""
