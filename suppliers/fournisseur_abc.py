@@ -707,6 +707,7 @@ def run_transform(
             "description", "Description", "Product Name", "product name",
             "Title", "title", "Style", "style", "Style Name", "style name",
             "Display Name", "display name", "Online Display Name", "online display name",
+            "Technical Specifications", "technical specifications",
         ]
         msrp_candidates = [
             "Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)",
@@ -778,6 +779,20 @@ def run_transform(
 
     sup = _read_supplier_multi_sheet(supplier_xlsx_bytes).copy()
 
+
+    # -----------------------------------------------------
+    # Detect price columns on the concatenated supplier dataframe
+    # (fix: detected_* set inside sheet loop are not propagated)
+    # -----------------------------------------------------
+    detected_cost_col = _find_col(sup.columns, [
+        "Wholesale CAD", "Wholesale (CAD)", "CAD Wholesale", "WholesaleCAD", "wholesale cad",
+        "Landed", "landed", "Wholesale Price (CAD)", "wholesale price (cad)", "Wholesale Price", "wholesale price"
+    ])
+    detected_price_col = _find_col(sup.columns, [
+        "Retail CAD", "Retail (CAD)", "CAD Retail", "RetailCAD", "retail cad",
+        "Retail Price (CAD)", "Cad MSRP", "MSRP", "msrp"
+    ])
+
     wb = _load_help_wb(help_xlsx_bytes)
 
     # Standardization
@@ -804,7 +819,8 @@ def run_transform(
     desc_col = _first_existing_col(
         sup,
         [
-            "description", "Description", "Product Name", "product name",
+                        "Technical Specifications", "technical specifications",
+"description", "Description", "Product Name", "product name",
             "Title", "title", "Style", "style", "Style Name", "style name",
             "Display Name", "display name", "Online Display Name", "online display name",
         ],
@@ -820,6 +836,21 @@ def run_transform(
     landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
     grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight"])
     gender_col = _first_existing_col(sup, ["Gender", "gender", "Genre", "genre", "Sex", "sex", "Sexe", "sexe"])
+
+
+    # -----------------------------------------------------
+    # Gender inference: detect "-w-" / "- W -" / "-m-" / "- M -" in Name or SKU
+    # -----------------------------------------------------
+    name_hint_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style"])
+    sku_hint_col = extid_col or product_col
+
+    def _infer_gender_from_texts(name_val: str, sku_val: str) -> str:
+        t = f"{_norm(name_val)} {_norm(sku_val)}".lower()
+        if re.search(r"-\s*w\s*-", t):
+            return "Women"
+        if re.search(r"-\s*m\s*-", t):
+            return "Men"
+        return ""
 
     if desc_col is None:
         raise ValueError(
@@ -873,6 +904,17 @@ def run_transform(
     sup["_desc_seo"] = sup["_desc_raw"].apply(_convert_r_to_registered)
     sup["_desc_handle"] = sup["_desc_raw"].apply(_strip_reg_for_handle)
 
+    # -----------------------------------------------------
+    # Long description rule:
+    # If the source description text is > 200 chars, move it to Body (HTML)
+    # and build Title from Style Name / Name instead of the long description.
+    # -----------------------------------------------------
+    title_name_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style"])
+    sup["_title_name_raw"] = sup[title_name_col].astype(str).fillna("").map(_norm) if title_name_col else ""
+    sup["_desc_is_long"] = sup["_desc_raw"].apply(lambda x: len(str(x)) > 200)
+    sup["_body_html"] = sup.apply(lambda r: r["_desc_seo"] if r["_desc_is_long"] else "", axis=1)
+
+
     # Color / Size input
     sup["_color_raw"] = sup[color_col].astype(str).fillna("").map(_norm) if color_col else ""
     sup["_size_raw"] = sup[size_col].astype(str).fillna("").map(_norm) if size_col else ""
@@ -894,6 +936,19 @@ def run_transform(
 
     # Gender (standardize if possible)
     sup["_gender_raw"] = sup[gender_col].astype(str).fillna("").map(_norm) if gender_col else ""
+
+    sup["_gender_inferred"] = sup.apply(
+        lambda r: _infer_gender_from_texts(
+            r.get(name_hint_col, "") if name_hint_col else "",
+            r.get(sku_hint_col, "") if sku_hint_col else "",
+        ),
+        axis=1,
+    )
+    sup.loc[sup["_gender_raw"].astype(str).str.strip().eq(""), "_gender_raw"] = sup.loc[
+        sup["_gender_raw"].astype(str).str.strip().eq(""),
+        "_gender_inferred",
+    ]
+
     sup["_gender_std"] = sup["_gender_raw"].apply(lambda x: _standardize(x, gender_map)) if gender_map else sup["_gender_raw"]
 
     # Vendor / Brand
@@ -908,7 +963,7 @@ def run_transform(
         return _title_case_preserve_registered(gg)
 
     sup["_gender_title"] = sup["_gender_std"].astype(str).fillna("").map(_gender_for_title)
-    sup["_desc_title"] = sup["_desc_seo"].astype(str).fillna("").map(_title_case_preserve_registered)
+    sup["_desc_title"] = sup.apply(lambda r: _title_case_preserve_registered(r["_title_name_raw"]) if r.get("_desc_is_long") and r["_title_name_raw"] else _title_case_preserve_registered(r["_desc_seo"]), axis=1)
     sup["_color_title"] = sup["_color_in"].astype(str).fillna("").map(_title_case_preserve_registered)
 
     sup["_title"] = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
@@ -1076,7 +1131,7 @@ def run_transform(
     out["Handle"] = sup["_handle"]
     out["Command"] = "NEW"
     out["Title"] = sup["_title"]
-    out["Body (HTML)"] = ""
+    out["Body (HTML)"] = sup["_body_html"]
     out["Vendor"] = sup["_vendor"]
     out["Custom Product Type"] = sup["_product_type"]
     out["Tags"] = sup["_tags"]
