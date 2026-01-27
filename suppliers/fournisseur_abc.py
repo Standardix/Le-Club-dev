@@ -850,7 +850,7 @@ def run_transform(
 
     product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
     color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code"])
-    size_col = _first_existing_col(sup, ["Size", "size", "Vendor Size1", "vendor size1"])
+    size_col = _first_existing_col(sup, ["Size 1","Size1","Size", "size", "Vendor Size1", "vendor size1"])
     upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
     origin_col = _first_existing_col(sup, ["Country Code", "Origin", "Manufacturing Country", "COO", "country code", "origin", "manufacturing country", "coo"])
     hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code"])
@@ -927,7 +927,7 @@ def run_transform(
     sup["_desc_source"] = sup[desc_col].astype(str).fillna("")  # preserve original (length, punctuation, line breaks)
     sup["_desc_raw"] = sup["_desc_source"].map(_norm)
     sup["_desc_seo"] = sup["_desc_raw"].apply(_convert_r_to_registered)
-    sup["_desc_handle"] = sup["_desc_raw"].apply(_strip_reg_for_handle)
+    sup["_desc_handle"] = sup.apply(lambda r: _strip_reg_for_handle(r["_title_name_raw"]) if r.get("_desc_is_long") and r.get("_title_name_raw") else _strip_reg_for_handle(r["_desc_raw"]), axis=1)
 
     # -----------------------------------------------------
     # Long description rule:
@@ -993,8 +993,11 @@ def run_transform(
     sup["_color_title"] = sup["_color_in"].astype(str).fillna("").map(_title_case_preserve_registered)
 
     sup["_title"] = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
-    sup.loc[sup["_color_title"].str.strip().ne(""), "_title"] = (
-        sup["_title"].str.strip() + " - " + sup["_color_title"].str.strip()
+    sup.loc[sup["_color_title"].str.strip().ne(""), "_title"] = sup.apply(
+        lambda r: r["_title"]
+        if _norm(r["_color_title"]) and _norm(r["_color_title"]) in _norm(r["_title"])
+        else (r["_title"].strip() + " - " + r["_color_title"].strip()).strip(),
+        axis=1,
     )
 
     # Handle: Vendor + Gender + Description + Color (color NON-standardized)
