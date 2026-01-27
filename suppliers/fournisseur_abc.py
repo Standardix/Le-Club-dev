@@ -3,7 +3,17 @@ import re
 import math
 import pandas as pd
 import openpyxl
-from slugify import slugify
+try:
+    from slugify import slugify  # python-slugify
+except Exception:
+    import re
+    def slugify(value: str) -> str:
+        """Fallback slugify (ASCII-ish, hyphens)."""
+        s = str(value or "").lower()
+        s = re.sub(r"[^a-z0-9]+", "-", s)
+        s = re.sub(r"-{2,}", "-", s).strip("-")
+        return s
+
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 
@@ -555,7 +565,7 @@ def run_transform(
             "Display Name", "display name", "Online Display Name", "online display name",
         ]
         msrp_candidates = [
-            "Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)",
+            "Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)", "Retail CAD", "retail cad",
         ]
 
         dfs: list[pd.DataFrame] = []
@@ -581,14 +591,12 @@ def run_transform(
 
             # Validate minimum required columns
             has_desc = _first_existing_col(df, desc_candidates) is not None
-            has_msrp = _first_existing_col(df, msrp_candidates) is not None
-            if not (has_desc and has_msrp):
+            if not has_desc:
                 warnings.append({
                     "type": "sheet_skipped",
                     "sheet": sn,
                     "reason": "missing_required_columns",
                     "has_desc": has_desc,
-                    "has_msrp": has_msrp,
                 })
                 continue
 
@@ -597,7 +605,7 @@ def run_transform(
 
         if not dfs:
             raise ValueError(
-                "Aucun onglet valide détecté dans le fichier fournisseur (colonne Description + MSRP requises)."
+                "Aucun onglet valide détecté dans le fichier fournisseur (colonne Description requise)."
             )
         return pd.concat(dfs, ignore_index=True, sort=False)
 
@@ -636,23 +644,19 @@ def run_transform(
     )
     product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
     color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code"])
-    size_col = _first_existing_col(sup, ["Size", "size", "Vendor Size1", "vendor size1"])
-    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "upc", "upc code"])
+    size_col = _first_existing_col(sup, ["Size", "size", "Size 1", "size 1", "Vendor Size1", "vendor size1"])
+    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code 1", "upc code 1", "upc", "upc code"])
     origin_col = _first_existing_col(sup, ["Country Code", "Origin", "Manufacturing Country", "COO", "country code", "origin", "manufacturing country", "coo"])
     hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code"])
     extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
-    msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)"])
-    landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
+    msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)", "Retail CAD", "retail cad"])
+    landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)", "Wholesale CAD", "wholesale cad"])
     grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight"])
     gender_col = _first_existing_col(sup, ["Gender", "gender", "Genre", "genre", "Sex", "sex", "Sexe", "sexe"])
 
     if desc_col is None:
         raise ValueError(
             "Colonne Description introuvable. Colonnes acceptées: Description, Style, Style Name, Product Name, Title, Display Name, Online Display Name."
-        )
-    if msrp_col is None:
-        raise ValueError(
-            "Colonne MSRP introuvable. Colonnes acceptées: Retail Price (CAD), Cad MSRP, MSRP."
         )
 
     # -----------------------------------------------------
@@ -720,8 +724,39 @@ def run_transform(
     sup["_size_std"] = sup["_size_in"].apply(lambda x: _standardize(x, size_map))
 
     # Gender (standardize if possible)
+    name_col = _first_existing_col(sup, ["Name", "name", "SKU", "sku"])
     sup["_gender_raw"] = sup[gender_col].astype(str).fillna("").map(_norm) if gender_col else ""
     sup["_gender_std"] = sup["_gender_raw"].apply(lambda x: _standardize(x, gender_map)) if gender_map else sup["_gender_raw"]
+
+    def _infer_gender_from_text(text: str) -> str:
+        """
+        Infer Men/Women from patterns like:
+          - "-w-" / "- W -"
+          - "-m-" / "- M -"
+        in Name or SKU-like fields.
+        """
+        s = str(text or "")
+        if not s:
+            return ""
+        # Normalize separators to single hyphen for easier matching
+        s2 = re.sub(r"\s+", " ", s)
+        if re.search(r"(?i)(?:^|\s|-|_)w(?:\s|-|_|$)", s2) and re.search(r"(?i)-\s*w\s*-", s2):
+            return "Women"
+        if re.search(r"(?i)(?:^|\s|-|_)m(?:\s|-|_|$)", s2) and re.search(r"(?i)-\s*m\s*-", s2):
+            return "Men"
+        # fallback: strict -w- / -m-
+        if re.search(r"(?i)-\s*w\s*-", s2):
+            return "Women"
+        if re.search(r"(?i)-\s*m\s*-", s2):
+            return "Men"
+        return ""
+
+    # If Gender column is missing/blank, try to infer from Name (or SKU if present)
+    if name_col is not None:
+        inferred = sup[name_col].astype(str).fillna("").map(_infer_gender_from_text)
+        sup.loc[sup["_gender_raw"].astype(str).str.strip().eq(""), "_gender_raw"] = inferred
+        # re-standardize after inference
+        sup["_gender_std"] = sup["_gender_raw"].apply(lambda x: _standardize(x, gender_map)) if gender_map else sup["_gender_raw"]
 
     # Vendor / Brand
     sup["_vendor"] = vendor_name
@@ -833,14 +868,24 @@ def run_transform(
         sup["_grams"] = sup["_product_type"].apply(lambda pt: variant_weight_map.get(str(pt).strip().lower(), "") if pt else "")
 
     # Price
-    msrp_num = pd.to_numeric(
-        sup[msrp_col].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
-        errors="coerce",
-    )
-    sup["_price"] = msrp_num.apply(_round_to_nearest_9_99)
+    # Rule: only populate prices if the source column explicitly indicates CAD
+    msrp_is_cad = bool(msrp_col) and ("cad" in str(msrp_col).lower())
+    if msrp_is_cad:
+        msrp_num = pd.to_numeric(
+            sup[msrp_col].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
+            errors="coerce",
+        )
+        sup["_price"] = msrp_num.apply(_round_to_nearest_9_99)
+    else:
+        sup["_price"] = float("nan")
 
     # Cost
-    sup["_cost"] = sup[landed_col].astype(str).fillna("").map(_norm) if landed_col else ""
+    # Rule: only populate cost if the source column explicitly indicates CAD
+    landed_is_cad = bool(landed_col) and ("cad" in str(landed_col).lower())
+    if landed_is_cad:
+        sup["_cost"] = sup[landed_col].astype(str).fillna("").map(_norm) if landed_col else ""
+    else:
+        sup["_cost"] = ""
 
     # Size comment
     def _size_comment(r):
@@ -897,7 +942,7 @@ def run_transform(
     out["Handle"] = sup["_handle"]
     out["Command"] = "NEW"
     out["Title"] = sup["_title"]
-    out["Body (HTML)"] = ""
+    out["Body (HTML)"] = sup["_desc_raw"].apply(lambda s: s if len(str(s or "")) > 200 else "")
     out["Vendor"] = sup["_vendor"]
     out["Custom Product Type"] = sup["_product_type"]
     out["Tags"] = sup["_tags"]
