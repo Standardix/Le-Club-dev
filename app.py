@@ -56,13 +56,14 @@ SUPPLIERS = {
 }
 
 st.markdown("### 1️⃣ Sélection du fournisseur")
-supplier_name = st.selectbox("Choisir le fournisseur", list(SUPPLIERS.keys()))
+supplier_name = st.selectbox("Choisir le fournisseur", sorted(SUPPLIERS.keys(), key=lambda x: x.lower()))
 
 st.markdown("### 2️⃣ Upload des fichiers")
 supplier_file = st.file_uploader("Fichier fournisseur (.xlsx)", type=["xlsx"])
 help_file = st.file_uploader("Help data (.xlsx)", type=["xlsx"])
 
 
+existing_shopify_file = st.file_uploader("Fichier de produits existant dans Shopify (.xlsx)", type=["xlsx"])
 st.markdown("### 3️⃣ Tags")
 
 event_promo_tag = st.selectbox(
@@ -276,6 +277,7 @@ if generate:
             output_bytes, warnings_df = transform_fn(
                 supplier_xlsx_bytes=supplier_file.getvalue(),
                 help_xlsx_bytes=help_file.getvalue(),
+                existing_shopify_xlsx_bytes=(existing_shopify_file.getvalue() if existing_shopify_file is not None else None),
                 vendor_name=supplier_name,
                 brand_choice=brand_choice,  # toujours vide pour le pilote
                             event_promo_tag=event_promo_tag,
