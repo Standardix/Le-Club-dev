@@ -1057,23 +1057,51 @@ def run_transform(
     sup["_brand_choice"] = _norm(brand_choice)
 
     # Title: Gender('s) + Description - Color (NON-standardized, Title Cased)
+    # -----------------------------------------------------
+    # Title rules (kept stable across suppliers)
+    # a) Gender ('s if Men/Women) + Description + " - " + Color
+    # b) Color NON-standardized (Vendor Color / Color / Colour / Color Code)
+    # c) Description from: Description, Product Name, Title, Style, Style Name, Display Name, Online Display Name
+    # d) Title Case, ® conserved
+    # e) Truncate to max 200 chars
+    # -----------------------------------------------------
     def _gender_for_title(g: str) -> str:
         gg = _norm(g)
         if gg.lower() in ("men", "women"):
             gg = f"{gg}'s"
         return _title_case_preserve_registered(gg)
 
+    title_desc_col = _first_existing_col(
+        sup,
+        [
+            "Description",
+            "Product Name",
+            "Title",
+            "Style",
+            "Style Name",
+            "Display Name",
+            "Online Display Name",
+        ],
+    )
+
+    if title_desc_col is not None:
+        sup["_desc_title_norm"] = sup[title_desc_col].astype(str).fillna("").map(_norm).apply(_convert_r_to_registered)
+    else:
+        # fallback to the already built SEO description
+        sup["_desc_title_norm"] = sup["_desc_seo"].astype(str).fillna("")
+
     sup["_gender_title"] = sup["_gender_std"].astype(str).fillna("").map(_gender_for_title)
-    sup["_desc_title"] = sup.apply(lambda r: _title_case_preserve_registered(r["_title_name_raw"]) if r.get("_desc_is_long") and r["_title_name_raw"] else _title_case_preserve_registered(r["_desc_seo"]), axis=1)
+    sup["_desc_title"] = sup["_desc_title_norm"].astype(str).fillna("").map(_title_case_preserve_registered)
     sup["_color_title"] = sup["_color_in"].astype(str).fillna("").map(_title_case_preserve_registered)
 
-    sup["_title"] = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
-    sup.loc[sup["_color_title"].str.strip().ne(""), "_title"] = sup.apply(
-        lambda r: r["_title"]
-        if _norm(r["_color_title"]) and _norm(r["_color_title"]) in _norm(r["_title"])
-        else (r["_title"].strip() + " - " + r["_color_title"].strip()).strip(),
-        axis=1,
-    )
+    base_title = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
+    sup["_title"] = base_title
+    sup.loc[sup["_color_title"].str.strip().ne(""), "_title"] = (
+        base_title.str.strip() + " - " + sup["_color_title"].str.strip()
+    ).str.strip()
+
+    # Max 200 chars
+    sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
 
     # Handle: Vendor + Gender + Description + Color (color NON-standardized)
     def _make_handle(r):
