@@ -47,8 +47,12 @@ SUPPLIERS = {
     "District Vision": run_abc,
     "Fingerscrossed": run_abc,
     "MAAP": run_abc,
+    "norda": run_abc,
     "Pas Normal Studios": run_abc,
+    "Rapha": run_abc,
+    "Soar": run_abc,
     "Tracksmith": run_abc,
+    
 }
 
 st.markdown("### 1️⃣ Sélection du fournisseur")
