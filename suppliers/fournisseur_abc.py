@@ -230,6 +230,15 @@ def _norm(s) -> str:
     return re.sub(r"\s+", " ", str(s or "").strip())
 
 
+def _strip_gender_prefix_size(v: str) -> str:
+    s = _norm(v)
+    if not s:
+        return ""
+    if re.match(r"^[WwMm]\s*\d", s):
+        return s[1:].strip()
+    return s
+
+
 
 def _clean_style_key(v) -> str:
     s = _norm(v)
@@ -1002,10 +1011,12 @@ def run_transform(
 
     # Handle: Vendor + Gender + Description + Color (color NON-standardized)
     def _make_handle(r):
+        # When description is long and moved to Body (HTML), build handle from Style Name/Name (same rule as Title)
+        desc_for_handle = r.get("_title_name_raw") if r.get("_desc_is_long") and r.get("_title_name_raw") else r.get("_desc_handle")
         parts = [
             _strip_reg_for_handle(r["_vendor"]),
             _strip_reg_for_handle(r["_gender_std"]),
-            r["_desc_handle"],
+            _strip_reg_for_handle(desc_for_handle),
             _strip_reg_for_handle(r["_color_in"]),
         ]
         parts = [p for p in parts if p and str(p).strip()]
@@ -1117,7 +1128,7 @@ def run_transform(
     sup["_google_cat_id"] = sup["_desc_raw"].apply(lambda t: _best_match_id(t, google_cat_rows))
 
     # Siblings
-    sup["_siblings"] = sup.apply(lambda r: slugify(f"{r['_vendor']} {r['_desc_handle']}"), axis=1)
+    sup["_siblings"] = sup["_handle"]
 
     # SEO Title (adds 's for Men/Women, Title Case)
     def _seo_title(r):
@@ -1262,6 +1273,13 @@ def run_transform(
         red_font = openpyxl.styles.Font(color="FFFF0000")
 
         # Data rows start at Excel row 2
+        if not rows_to_color_red:
+            rows_to_color_red = []
+            for excel_row in range(2, ws.max_row + 1):
+                v = ws.cell(row=excel_row, column=tags_col_idx).value
+                if v and "seasonal" in str(v).lower():
+                    rows_to_color_red.append(excel_row - 2)
+
         for df_i in rows_to_color_red:
             excel_row = df_i + 2
             cell = ws.cell(row=excel_row, column=tags_col_idx)
