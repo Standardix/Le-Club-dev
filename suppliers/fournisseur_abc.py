@@ -239,6 +239,17 @@ def _strip_gender_prefix_size(v: str) -> str:
     return s
 
 
+def _strip_gender_tokens(text: str) -> str:
+    """Remove embedded gender markers like -w-, - W -, -m-, etc from a string."""
+    s = str(text or "")
+    # remove patterns like -w- , - W - , /w/ etc surrounded by dashes/spaces
+    s = re.sub(r"(?i)(\s*-\s*[wm]\s*-\s*)", " ", s)
+    s = re.sub(r"(?i)(\b[wm]\b)", lambda m: "" if m.group(0).lower() in ("w","m") else m.group(0), s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+
 
 def _clean_style_key(v) -> str:
     s = _norm(v)
@@ -1012,16 +1023,21 @@ def run_transform(
     # Handle: Vendor + Gender + Description + Color (color NON-standardized)
     def _make_handle(r):
         # When description is long and moved to Body (HTML), build handle from Style Name/Name (same rule as Title)
-        desc_for_handle = r.get("_title_name_raw") if r.get("_desc_is_long") and r.get("_title_name_raw") else r.get("_desc_handle")
+        base_text = r.get("_title_name_raw") if r.get("_desc_is_long") and r.get("_title_name_raw") else r.get("_desc_handle")
+        base_text = _strip_gender_tokens(base_text)
+        desc_for_handle = _strip_reg_for_handle(base_text)
+        color_for_handle = _strip_reg_for_handle(r.get("_color_in", ""))
+        # Avoid duplicating color if it's already present in the base text
+        if color_for_handle and _norm(color_for_handle).lower() in _norm(desc_for_handle).lower():
+            color_for_handle = ""
         parts = [
-            _strip_reg_for_handle(r["_vendor"]),
-            _strip_reg_for_handle(r["_gender_std"]),
-            _strip_reg_for_handle(desc_for_handle),
-            _strip_reg_for_handle(r["_color_in"]),
+            _strip_reg_for_handle(r.get("_vendor")),
+            _strip_reg_for_handle(r.get("_gender_std")),
+            desc_for_handle,
+            color_for_handle,
         ]
         parts = [p for p in parts if p and str(p).strip()]
         return slugify(" ".join(parts))
-
     sup["_handle"] = sup.apply(_make_handle, axis=1)
 
     # Custom Product Type: match using DESCRIPTION (to catch TEE / LONG SLEEVE etc.)
@@ -1180,7 +1196,7 @@ def run_transform(
     out["Published Scope"] = "global"
 
     out["Option1 Name"] = "Size"
-    out["Option1 Value"] = sup["_size_std"]
+    out["Option1 Value"] = sup["_size_std"].map(_strip_gender_prefix_size)
 
     out["Variant SKU"] = sup["_variant_sku"]
     out["Variant Barcode"] = sup["_barcode"]
@@ -1211,7 +1227,7 @@ def run_transform(
 
     out["Metafield: my_fields.colour [single_line_text_field]"] = sup["_color_std"]
     out["Metafield: mm-google-shopping.color"] = sup["_color_std"]
-    out["Variant Metafield: mm-google-shopping.size"] = sup["_size_std"]
+    out["Variant Metafield: mm-google-shopping.size"] = sup["_size_std"].map(_strip_gender_prefix_size)
 
     out["Metafield: mm-google-shopping.size_system"] = "US"
     out["Metafield: mm-google-shopping.condition"] = "new"
