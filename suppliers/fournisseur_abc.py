@@ -1,21 +1,114 @@
+
+
+def _build_existing_shopify_index(existing_shopify_xlsx_bytes: bytes | None):
+    """Build matching indexes from an existing Shopify product export/list.
+
+    Keys priority (as requested):
+      1) brand + SKU + UPC
+      2) brand + UPC
+      3) brand + SKU
+      4) SKU + UPC
+      5) UPC
+
+    Also returns a set of existing handles (normalized).
+    """
+    handles_set: set[str] = set()
+    key_sets = {
+        "brand_sku_upc": set(),
+        "brand_upc": set(),
+        "brand_sku": set(),
+        "sku_upc": set(),
+        "upc": set(),
+    }
+    if not existing_shopify_xlsx_bytes:
+        return handles_set, key_sets
+
+    try:
+        bio = io.BytesIO(existing_shopify_xlsx_bytes)
+        df = pd.read_excel(bio)  # first sheet by default
+    except Exception:
+        return handles_set, key_sets
+
+    cols_l = {str(c).strip().lower(): c for c in df.columns}
+    handle_col = cols_l.get("handle")
+    vendor_col = cols_l.get("vendor") or cols_l.get("brand")
+    sku_col = cols_l.get("variant sku") or cols_l.get("sku")
+    upc_col = cols_l.get("variant barcode") or cols_l.get("barcode") or cols_l.get("upc")
+
+    for _, r in df.iterrows():
+        h = _norm(r.get(handle_col, "")) if handle_col else ""
+        if h:
+            handles_set.add(h)
+
+        brand = _norm(r.get(vendor_col, "")) if vendor_col else ""
+        sku = _norm(r.get(sku_col, "")) if sku_col else ""
+        upc = _norm(r.get(upc_col, "")) if upc_col else ""
+
+        if brand and sku and upc:
+            key_sets["brand_sku_upc"].add((brand, sku, upc))
+        if brand and upc:
+            key_sets["brand_upc"].add((brand, upc))
+        if brand and sku:
+            key_sets["brand_sku"].add((brand, sku))
+        if sku and upc:
+            key_sets["sku_upc"].add((sku, upc))
+        if upc:
+            key_sets["upc"].add((upc,))
+
+    return handles_set, key_sets
+
+
+def _row_is_existing(brand: str, sku: str, upc: str, key_sets) -> bool:
+    b = _norm(brand)
+    s = _norm(sku)
+    u = _norm(upc)
+    if b and s and u and (b, s, u) in key_sets["brand_sku_upc"]:
+        return True
+    if b and u and (b, u) in key_sets["brand_upc"]:
+        return True
+    if b and s and (b, s) in key_sets["brand_sku"]:
+        return True
+    if s and u and (s, u) in key_sets["sku_upc"]:
+        return True
+    if u and (u,) in key_sets["upc"]:
+        return True
+    return False
+
+
+def _apply_red_font_for_handle(buffer: io.BytesIO, sheet_name: str, rows_to_color: list[int]) -> io.BytesIO:
+    """Color the Handle cell red for the given 0-based row indexes (dataframe rows)."""
+    wb = load_workbook(buffer)
+    ws = wb[sheet_name]
+
+    # locate Handle column
+    headers = [str(c.value or "") for c in ws[1]]
+    try:
+        handle_col_idx = headers.index("Handle") + 1
+    except ValueError:
+        # nothing to do
+        out = io.BytesIO()
+        wb.save(out)
+        out.seek(0)
+        return out
+
+    red_font = Font(color="FF0000")
+    for df_i in rows_to_color:
+        excel_row = df_i + 2  # header +1, df row offset
+        cell = ws.cell(row=excel_row, column=handle_col_idx)
+        cell.font = red_font
+
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return out
 import io
 import re
 import math
 import pandas as pd
 import openpyxl
-try:
-    from slugify import slugify  # python-slugify
-except Exception:
-    import re
-    def slugify(value: str) -> str:
-        """Fallback slugify (ASCII-ish, hyphens)."""
-        s = str(value or "").lower()
-        s = re.sub(r"[^a-z0-9]+", "-", s)
-        s = re.sub(r"-{2,}", "-", s).strip("-")
-        return s
-
+from slugify import slugify
 from openpyxl import load_workbook
-from openpyxl.styles import PatternFill
+from openpyxl.styles import PatternFill, Font
 
 YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
@@ -566,7 +659,7 @@ def run_transform(
             "Display Name", "display name", "Online Display Name", "online display name",
         ]
         msrp_candidates = [
-            "Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)", "Retail CAD", "retail cad",
+            "Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)",
         ]
 
         dfs: list[pd.DataFrame] = []
@@ -592,12 +685,14 @@ def run_transform(
 
             # Validate minimum required columns
             has_desc = _first_existing_col(df, desc_candidates) is not None
-            if not has_desc:
+            has_msrp = _first_existing_col(df, msrp_candidates) is not None
+            if not (has_desc and has_msrp):
                 warnings.append({
                     "type": "sheet_skipped",
                     "sheet": sn,
                     "reason": "missing_required_columns",
                     "has_desc": has_desc,
+                    "has_msrp": has_msrp,
                 })
                 continue
 
@@ -606,7 +701,7 @@ def run_transform(
 
         if not dfs:
             raise ValueError(
-                "Aucun onglet valide détecté dans le fichier fournisseur (colonne Description requise)."
+                "Aucun onglet valide détecté dans le fichier fournisseur (colonne Description + MSRP requises)."
             )
         return pd.concat(dfs, ignore_index=True, sort=False)
 
@@ -645,19 +740,23 @@ def run_transform(
     )
     product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
     color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code"])
-    size_col = _first_existing_col(sup, ["Size", "size", "Size 1", "size 1", "Vendor Size1", "vendor size1"])
-    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code 1", "upc code 1", "upc", "upc code"])
+    size_col = _first_existing_col(sup, ["Size", "size", "Vendor Size1", "vendor size1"])
+    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "upc", "upc code"])
     origin_col = _first_existing_col(sup, ["Country Code", "Origin", "Manufacturing Country", "COO", "country code", "origin", "manufacturing country", "coo"])
     hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code"])
     extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
-    msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)", "Retail CAD", "retail cad"])
-    landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)", "Wholesale CAD", "wholesale cad"])
+    msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)"])
+    landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
     grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight"])
     gender_col = _first_existing_col(sup, ["Gender", "gender", "Genre", "genre", "Sex", "sex", "Sexe", "sexe"])
 
     if desc_col is None:
         raise ValueError(
             "Colonne Description introuvable. Colonnes acceptées: Description, Style, Style Name, Product Name, Title, Display Name, Online Display Name."
+        )
+    if msrp_col is None:
+        raise ValueError(
+            "Colonne MSRP introuvable. Colonnes acceptées: Retail Price (CAD), Cad MSRP, MSRP."
         )
 
     # -----------------------------------------------------
@@ -725,39 +824,8 @@ def run_transform(
     sup["_size_std"] = sup["_size_in"].apply(lambda x: _standardize(x, size_map))
 
     # Gender (standardize if possible)
-    name_col = _first_existing_col(sup, ["Name", "name", "SKU", "sku"])
     sup["_gender_raw"] = sup[gender_col].astype(str).fillna("").map(_norm) if gender_col else ""
     sup["_gender_std"] = sup["_gender_raw"].apply(lambda x: _standardize(x, gender_map)) if gender_map else sup["_gender_raw"]
-
-    def _infer_gender_from_text(text: str) -> str:
-        """
-        Infer Men/Women from patterns like:
-          - "-w-" / "- W -"
-          - "-m-" / "- M -"
-        in Name or SKU-like fields.
-        """
-        s = str(text or "")
-        if not s:
-            return ""
-        # Normalize separators to single hyphen for easier matching
-        s2 = re.sub(r"\s+", " ", s)
-        if re.search(r"(?i)(?:^|\s|-|_)w(?:\s|-|_|$)", s2) and re.search(r"(?i)-\s*w\s*-", s2):
-            return "Women"
-        if re.search(r"(?i)(?:^|\s|-|_)m(?:\s|-|_|$)", s2) and re.search(r"(?i)-\s*m\s*-", s2):
-            return "Men"
-        # fallback: strict -w- / -m-
-        if re.search(r"(?i)-\s*w\s*-", s2):
-            return "Women"
-        if re.search(r"(?i)-\s*m\s*-", s2):
-            return "Men"
-        return ""
-
-    # If Gender column is missing/blank, try to infer from Name (or SKU if present)
-    if name_col is not None:
-        inferred = sup[name_col].astype(str).fillna("").map(_infer_gender_from_text)
-        sup.loc[sup["_gender_raw"].astype(str).str.strip().eq(""), "_gender_raw"] = inferred
-        # re-standardize after inference
-        sup["_gender_std"] = sup["_gender_raw"].apply(lambda x: _standardize(x, gender_map)) if gender_map else sup["_gender_raw"]
 
     # Vendor / Brand
     sup["_vendor"] = vendor_name
@@ -869,24 +937,14 @@ def run_transform(
         sup["_grams"] = sup["_product_type"].apply(lambda pt: variant_weight_map.get(str(pt).strip().lower(), "") if pt else "")
 
     # Price
-    # Rule: only populate prices if the source column explicitly indicates CAD
-    msrp_is_cad = bool(msrp_col) and ("cad" in str(msrp_col).lower())
-    if msrp_is_cad:
-        msrp_num = pd.to_numeric(
-            sup[msrp_col].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
-            errors="coerce",
-        )
-        sup["_price"] = msrp_num.apply(_round_to_nearest_9_99)
-    else:
-        sup["_price"] = float("nan")
+    msrp_num = pd.to_numeric(
+        sup[msrp_col].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
+        errors="coerce",
+    )
+    sup["_price"] = msrp_num.apply(_round_to_nearest_9_99)
 
     # Cost
-    # Rule: only populate cost if the source column explicitly indicates CAD
-    landed_is_cad = bool(landed_col) and ("cad" in str(landed_col).lower())
-    if landed_is_cad:
-        sup["_cost"] = sup[landed_col].astype(str).fillna("").map(_norm) if landed_col else ""
-    else:
-        sup["_cost"] = ""
+    sup["_cost"] = sup[landed_col].astype(str).fillna("").map(_norm) if landed_col else ""
 
     # Size comment
     def _size_comment(r):
@@ -943,7 +1001,7 @@ def run_transform(
     out["Handle"] = sup["_handle"]
     out["Command"] = "NEW"
     out["Title"] = sup["_title"]
-    out["Body (HTML)"] = sup["_desc_raw"].apply(lambda s: s if len(str(s or "")) > 200 else "")
+    out["Body (HTML)"] = ""
     out["Vendor"] = sup["_vendor"]
     out["Custom Product Type"] = sup["_product_type"]
     out["Tags"] = sup["_tags"]
@@ -1055,172 +1113,67 @@ def run_transform(
         out.seek(0)
         return out
 
-    def _load_existing_shopify_keys(existing_xlsx_bytes: bytes | None):
-        """Return lookup sets for existing Shopify products export."""
-        empty = (set(), set(), set(), set(), set(), set())
-        if not existing_xlsx_bytes:
-            return empty
-
-        try:
-            df = pd.read_excel(io.BytesIO(existing_xlsx_bytes), sheet_name=0)
-        except Exception:
-            # try common sheet name
-            try:
-                df = pd.read_excel(io.BytesIO(existing_xlsx_bytes), sheet_name="Products")
-            except Exception:
-                return empty
-
-        # normalize column names
-        col_map = {c.lower().strip(): c for c in df.columns}
-        def _col(*names):
-            for n in names:
-                key = n.lower().strip()
-                if key in col_map:
-                    return col_map[key]
-            return None
-
-        c_vendor = _col("Vendor")
-        c_sku = _col("Variant SKU", "SKU")
-        c_upc = _col("Variant Barcode", "Barcode", "UPC")
-        c_handle = _col("Handle")
-
-        def _norm_key(x):
-            s = str(x or "").strip()
-            s = re.sub(r"^(\d+)\.0+$", r"\1", s)
-            return s
-
-        # Build sets for matching priority keys
-        s_brand_sku_upc = set()
-        s_brand_upc = set()
-        s_brand_sku = set()
-        s_sku_upc = set()
-        s_upc = set()
-        s_handles = set()
-
-        for _, r in df.iterrows():
-            brand = _norm_key(r.get(c_vendor) if c_vendor else "")
-            sku = _norm_key(r.get(c_sku) if c_sku else "")
-            upc = _norm_key(r.get(c_upc) if c_upc else "")
-            handle = _norm_key(r.get(c_handle) if c_handle else "")
-
-            if handle:
-                s_handles.add(handle)
-
-            if brand and sku and upc:
-                s_brand_sku_upc.add((brand, sku, upc))
-            if brand and upc:
-                s_brand_upc.add((brand, upc))
-            if brand and sku:
-                s_brand_sku.add((brand, sku))
-            if sku and upc:
-                s_sku_upc.add((sku, upc))
-            if upc:
-                s_upc.add(upc)
-
-        return (s_brand_sku_upc, s_brand_upc, s_brand_sku, s_sku_upc, s_upc, s_handles)
-
-
-    def _split_products_do_not_import(out_df: pd.DataFrame, existing_sets):
-        s_brand_sku_upc, s_brand_upc, s_brand_sku, s_sku_upc, s_upc, _ = existing_sets
-
-        def _norm_key(x):
-            s = str(x or "").strip()
-            s = re.sub(r"^(\d+)\.0+$", r"\1", s)
-            return s
-
-        do_not = []
-        products = []
-
-        for i, r in out_df.iterrows():
-            brand = _norm_key(r.get("Vendor"))
-            sku = _norm_key(r.get("Variant SKU"))
-            upc = _norm_key(r.get("Variant Barcode"))
-
-            found = False
-            if brand and sku and upc and (brand, sku, upc) in s_brand_sku_upc:
-                found = True
-            elif brand and upc and (brand, upc) in s_brand_upc:
-                found = True
-            elif brand and sku and (brand, sku) in s_brand_sku:
-                found = True
-            elif sku and upc and (sku, upc) in s_sku_upc:
-                found = True
-            elif upc and upc in s_upc:
-                found = True
-
-            (do_not if found else products).append(i)
-
-        return out_df.loc[products].copy(), out_df.loc[do_not].copy()
-
-
-    def _apply_red_font_for_handle(buffer: io.BytesIO, sheet_name: str, rows_to_color_red: list[int]):
-        wb = openpyxl.load_workbook(buffer)
-        ws = wb[sheet_name]
-
-        # find handle column
-        handle_col_idx = None
-        for c in range(1, ws.max_column + 1):
-            if str(ws.cell(row=1, column=c).value).strip().lower() == "handle":
-                handle_col_idx = c
-                break
-        if handle_col_idx is None:
-            out = io.BytesIO()
-            wb.save(out)
-            out.seek(0)
-            return out
-
-        red_font = Font(color="FFFF0000")
-
-        for df_i in rows_to_color_red:
-            excel_row = df_i + 2
-            cell = ws.cell(row=excel_row, column=handle_col_idx)
-            cell.font = red_font
-
-        out = io.BytesIO()
-        wb.save(out)
-        out.seek(0)
-        return out
-    existing_sets = _load_existing_shopify_keys(existing_shopify_xlsx_bytes)
-    products_df, do_not_df = _split_products_do_not_import(out, existing_sets)
-
-    # Map "Seasonal" rows (colour != Black) from original sup index -> flag
-    seasonal_flag_by_idx = {
-        i: (_norm(c) != "" and _norm(c).lower() != "black")
-        for i, c in enumerate(sup["_color_std"].astype(str).tolist())
-    }
-
-    def _rows_to_color_red_for_df(df_part: pd.DataFrame) -> list[int]:
-        return [pos for pos, idx in enumerate(df_part.index.tolist()) if seasonal_flag_by_idx.get(int(idx), False)]
-
-    def _rows_to_color_red_handle_for_df(df_part: pd.DataFrame, handles_set: set[str]) -> list[int]:
-        def _norm_key(x):
-            s = str(x or "").strip()
-            s = re.sub(r"^(\d+)\.0+$", r"\1", s)
-            return s
-        return [pos for pos, h in enumerate(df_part["Handle"].astype(str).tolist()) if _norm_key(h) in handles_set]
-
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        products_df.to_excel(writer, index=False, sheet_name="products")
-        do_not_df.to_excel(writer, index=False, sheet_name="do not import")
 
-    # Apply red font for Tags (Seasonal) on both sheets
-    rows_red_products = _rows_to_color_red_for_df(products_df)
-    rows_red_do_not = _rows_to_color_red_for_df(do_not_df)
-    buffer = _apply_red_font_for_tags(buffer, "products", rows_red_products)
-    buffer = _apply_red_font_for_tags(buffer, "do not import", rows_red_do_not)
+# Split into "products" and "do not import" based on existing Shopify file (if provided)
+existing_handles_set, existing_key_sets = _build_existing_shopify_index(existing_shopify_xlsx_bytes)
 
-    # Apply yellow fill for required-but-empty cells (both sheets)
-    buffer = _apply_yellow_for_empty(buffer, "products", yellow_if_empty_cols)
-    buffer = _apply_yellow_for_empty(buffer, "do not import", yellow_if_empty_cols)
+# columns expected in output
+vendor_col = "Vendor" if "Vendor" in out.columns else None
+sku_col = "Variant SKU" if "Variant SKU" in out.columns else ("SKU" if "SKU" in out.columns else None)
+upc_col = "Variant Barcode" if "Variant Barcode" in out.columns else ("Barcode" if "Barcode" in out.columns else ("UPC" if "UPC" in out.columns else None))
 
-    # Highlight Handle in red if it already exists in the provided Shopify product list
-    existing_handles = existing_sets[5] if existing_sets else set()
-    if existing_handles:
-        rows_handle_red_products = _rows_to_color_red_handle_for_df(products_df, existing_handles)
-        rows_handle_red_do_not = _rows_to_color_red_handle_for_df(do_not_df, existing_handles)
-        buffer = _apply_red_font_for_handle(buffer, "products", rows_handle_red_products)
-        buffer = _apply_red_font_for_handle(buffer, "do not import", rows_handle_red_do_not)
+def _getcol(r, c):
+    return r.get(c, "") if c else ""
 
-    return buffer.getvalue(), pd.DataFrame(warnings)
+mask_existing = []
+for _, r in out.iterrows():
+    brand = _getcol(r, vendor_col) or vendor_name
+    sku = _getcol(r, sku_col)
+    upc = _getcol(r, upc_col)
+    mask_existing.append(_row_is_existing(str(brand), str(sku), str(upc), existing_key_sets))
 
+mask_existing = pd.Series(mask_existing, index=out.index)
+
+products_df = out.loc[~mask_existing].copy()
+do_not_import_df = out.loc[mask_existing].copy()
+
+products_df.to_excel(writer, index=False, sheet_name="products")
+do_not_import_df.to_excel(writer, index=False, sheet_name="do not import")
+pd.DataFrame(warnings).to_excel(writer, index=False, sheet_name="warnings")
+
+    
+# Red font for Tags when colour is NOT Black (i.e., Seasonal) — apply on both sheets
+existing_handles_set, existing_key_sets = _build_existing_shopify_index(existing_shopify_xlsx_bytes)
+
+def _rows_to_color_for_df(df_slice: pd.DataFrame) -> list[int]:
+    if "_color_std" not in df_slice.columns:
+        return []
+    return [
+        i
+        for i, c in enumerate(df_slice["_color_std"].astype(str).tolist())
+        if _norm(c) != "" and _norm(c).lower() != "black"
+    ]
+
+# For handle red: when output handle already exists in Shopify
+def _rows_handle_conflict(df_slice: pd.DataFrame) -> list[int]:
+    if "Handle" not in df_slice.columns:
+        return []
+    return [i for i, h in enumerate(df_slice["Handle"].astype(str).tolist()) if _norm(h) in existing_handles_set and _norm(h) != ""]
+
+# Reload workbook buffer as BytesIO for styling helpers
+buffer.seek(0)
+
+# Apply tag red and yellow empty on each sheet
+buffer = _apply_red_font_for_tags(buffer, "products", _rows_to_color_for_df(products_df))
+buffer = _apply_red_font_for_tags(buffer, "do not import", _rows_to_color_for_df(do_not_import_df))
+
+buffer = _apply_yellow_for_empty(buffer, "products", yellow_if_empty_cols)
+buffer = _apply_yellow_for_empty(buffer, "do not import", yellow_if_empty_cols)
+
+# Apply red font for handle conflicts (only the cell in Handle column)
+buffer = _apply_red_font_for_handle(buffer, "products", _rows_handle_conflict(products_df))
+buffer = _apply_red_font_for_handle(buffer, "do not import", _rows_handle_conflict(do_not_import_df))
+
+return buffer.getvalue(), pd.DataFrame(warnings)
