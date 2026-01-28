@@ -7,7 +7,6 @@ import pandas as pd
 import re
 
 from suppliers.fournisseur_abc import run_transform as run_abc
-from suppliers.fournisseur_satisfy import run_transform as run_satisfy
 
 st.set_page_config(page_title="Générateur Shopify – Fichiers fournisseurs", layout="wide")
 
@@ -51,10 +50,9 @@ SUPPLIERS = {
     "norda": run_abc,
     "Pas Normal Studios": run_abc,
     "Rapha": run_abc,
-    "Soar": run_abc,
     "Satisfy": run_abc,
+    "Soar": run_abc,
     "Tracksmith": run_abc,
-    "Satisfy": run_satisfy,
     
 }
 
@@ -103,7 +101,8 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
     # Prefer explicit style-number fields (avoid generic "Style" which can match a style-name field in some files)
     style_number_candidates = [
         "Style NO", "Style No", "STYLE NO", "style no",
-        "Style Code", "style code", "Style Number", "Style Num", "Style #", "style number", "style #",
+        "Style Number", "Style Num", "Style #", "style number", "style #",
+        "Style Code", "style code",
     ]
     style_name_candidates = [
         "STYLE NAME", "Style Name", "Style name", "style name",
