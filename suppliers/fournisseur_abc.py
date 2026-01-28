@@ -660,11 +660,12 @@ def _extract_color_size_from_description(desc: str) -> tuple[str, str]:
 
 
 def _round_to_nearest_9_99(price) -> float:
+    def _round_to_dollar_minus_0_01(price) -> float:
     if price is None or (isinstance(price, float) and math.isnan(price)):
         return float("nan")
     p = float(price)
-    nearest10 = math.floor(p / 10.0 + 0.5) * 10.0
-    return round(nearest10 - 0.01, 2)
+    dollar_floor = math.floor(p)
+    return round(dollar_floor - 0.01, 2)
 
 
 def _barcode_keep_zeros(x) -> str:
@@ -1216,7 +1217,7 @@ def run_transform(
             sup[detected_price_col].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
             errors="coerce",
         )
-        sup["_price"] = price_num.apply(_round_to_nearest_9_99)
+        sup["_price"] = price_num.apply(_round_to_dollar_minus_0_01)
     else:
         sup["_price"] = ""
 
