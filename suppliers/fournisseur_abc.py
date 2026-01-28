@@ -237,6 +237,13 @@ def _norm(s) -> str:
     return re.sub(r"\s+", " ", str(s or "").strip())
 
 
+
+
+def _strip_made_in(s: str) -> str:
+    t = _norm(s)
+    # remove common prefixes like "Made In "
+    t = re.sub(r"(?i)^made\s+in\s+", "", t).strip()
+    return t
 def _norm_handle(v) -> str:
     s = str(v or "").strip().lower()
     # collapse whitespace
@@ -753,6 +760,7 @@ def run_transform(
 
     style_season_map = style_season_map or {}
     vendor_key = _colkey(vendor_name)
+    is_satisfy = vendor_key in ("satisfy",)
     style_season_map = { _clean_style_key(k): v for k, v in style_season_map.items() }
 
     # -----------------------------------------------------
@@ -887,14 +895,12 @@ def run_transform(
         "Retail Price (CAD)", "Cad MSRP", "MSRP", "msrp"
     ])
 
-    # -----------------------------------------------------
-    # Supplier-specific column overrides
-    # -----------------------------------------------------
-    if vendor_key in ("satisfy",):
-        # Satisfy order sheet uses generic column names and can include currency strings.
-        detected_cost_col = _find_col(sup.columns, ["wholesale", "Wholesale"])
-        detected_price_col = _find_col(sup.columns, ["retail price", "Retail Price", "retail", "Retail", "price", "Price"])
-
+    
+    # Satisfy: the file uses generic columns (retail/retail price/price and wholesale) without "CAD" in header.
+    # We override detection so Variant Price / Cost per item are populated for this supplier only.
+    if is_satisfy:
+        detected_price_col = _find_col(sup.columns, ["retail price", "retail", "price"])
+        detected_cost_col = _find_col(sup.columns, ["wholesale"])
     wb = _load_help_wb(help_xlsx_bytes)
 
     # Standardization
@@ -939,12 +945,12 @@ def run_transform(
             desc_col = desc_col_fallback
 
     product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
-    color_col = _first_existing_col(sup, ["colour code and name", "Colour Code and Name", "Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code"])
+    color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code", "colour code and name", "Colour Code and Name", "Color Code and Name"])
     size_col = _first_existing_col(sup, ["Size 1","Size1","Size", "size", "Vendor Size1", "vendor size1"])
     upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
     ean_col = _first_existing_col(sup, ["EAN", "EAN Code", "ean", "ean code"])
     origin_col = _first_existing_col(sup, ["Country of origin", "Country of Origin", "Country Of Origin", "Country Code", "Origin", "Manufacturing Country", "COO", "country of origin", "country of origin ", "country code", "origin", "manufacturing country", "coo"])
-    hs_col = _first_existing_col(sup, ["commodity hs", "Commodity HS", "commodity hts", "Commodity HTS", "HS Code", "HTS Code", "hs code", "hts code", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "custom tariff code (no dots)", "custom tariff code", "tariff code"])
+    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code", "commodity hs", "commodity hts", "Commodity HS", "Commodity HTS", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "custom tariff code (no dots)", "custom tariff code", "tariff code"])
     extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
     msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)"])
     landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
@@ -1146,7 +1152,7 @@ def run_transform(
     # -----------------------------------------------------
     # Seasonality key (to apply Seasonality Tags per style)
     # -----------------------------------------------------
-    style_num_col = _first_existing_col(sup, ["Style Code", "style code", "Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
+    style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
     style_name_col = _first_existing_col(sup, ["Style Name", "style name", "Product Name", "Name"])
     sup["_seasonality_key"] = ""
     if style_num_col is not None:
@@ -1206,8 +1212,7 @@ def run_transform(
         sup["_barcode"] = sup["_barcode"].where(sup["_barcode"].astype(str).str.strip().ne(""), ean_series)
 
     # Country (standardize)
-    sup["_origin_raw"] = sup[origin_col].astype(str).fillna("").map(_norm) if origin_col else ""
-    sup["_origin_raw"] = sup["_origin_raw"].str.replace(r"(?i)^made\s+in\s+", "", regex=True).str.strip()
+    sup["_origin_raw"] = sup[origin_col].astype(str).fillna("").map(_strip_made_in) if origin_col else ""
     sup["_origin_std"] = sup["_origin_raw"].apply(lambda x: _standardize(x, country_map))
 
     # HS Code
@@ -1221,21 +1226,18 @@ def run_transform(
         sup["_grams"] = sup["_product_type"].apply(lambda pt: variant_weight_map.get(str(pt).strip().lower(), "") if pt else "")
 
     # Price
-    if detected_price_col is not None and (_header_has_cad(detected_price_col) or vendor_key in ("satisfy",)):
-        # Satisfy can contain currency strings (e.g. "EUR EUR 260.00") -> extract first number
-        sprice = sup[detected_price_col].astype(str)
-        sprice = sprice.str.replace(",", "", regex=False)
-        extracted = sprice.str.extract(r"([0-9]+(?:\.[0-9]+)?)", expand=False)
-        price_num = pd.to_numeric(extracted, errors="coerce")
+    if detected_price_col is not None and (is_satisfy or _header_has_cad(detected_price_col)):
+        price_num = pd.to_numeric(
+            sup[detected_price_col].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
+            errors="coerce",
+        )
         sup["_price"] = price_num.apply(_round_to_nearest_9_99)
     else:
         sup["_price"] = ""
 
     # Cost (leave blank unless CAD column detected per rules)
-    if detected_cost_col is not None and (_header_has_cad(detected_cost_col) or vendor_key in ("satisfy",)):
-        scost = sup[detected_cost_col].astype(str).str.replace(",", "", regex=False)
-        extracted = scost.str.extract(r"([0-9]+(?:\.[0-9]+)?)", expand=False)
-        sup["_cost"] = extracted.fillna("").map(_norm)
+    if detected_cost_col is not None and (is_satisfy or _header_has_cad(detected_cost_col)):
+        sup["_cost"] = sup[detected_cost_col].astype(str).fillna("").map(_norm)
     else:
         sup["_cost"] = ""
 
