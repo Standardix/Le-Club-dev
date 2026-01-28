@@ -932,6 +932,7 @@ def run_transform(
             "Product Details", "product details",
             "Technical Specifications", "technical specifications",
             "Product Name", "product name",
+            "Name", "name",
             "Title", "title", "Style", "style", "Style Name", "style name",
             "Display Name", "display name", "Online Display Name", "online display name",
         ],
@@ -944,18 +945,18 @@ def run_transform(
         if non_empty_ratio < 0.2:
             desc_col = desc_col_fallback
 
-    product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
+    product_col = _first_existing_col(sup, ["SKU 1", "sku 1", "Product", "Product Code", "SKU", "sku"])
     color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code", "colour code and name", "Colour Code and Name", "Color Code and Name"])
     size_col = _first_existing_col(sup, ["Size 1","Size1","Size", "size", "Vendor Size1", "vendor size1"])
-    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
+    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "Barcodes", "barcodes", "bar code", "upc", "upc code"])
     ean_col = _first_existing_col(sup, ["EAN", "EAN Code", "ean", "ean code"])
     origin_col = _first_existing_col(sup, ["Country of origin", "Country of Origin", "Country Of Origin", "Country Code", "Origin", "Manufacturing Country", "COO", "country of origin", "country of origin ", "country code", "origin", "manufacturing country", "coo"])
-    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code", "commodity hs", "commodity hts", "Commodity HS", "Commodity HTS", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "custom tariff code (no dots)", "custom tariff code", "tariff code"])
-    extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
+    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "Customs Code", "customs code", "Harmonisation Code", "harmonisation code", "Harmonization Code", "harmonization code", "hs code", "hts code", "commodity hs", "commodity hts", "Commodity HS", "Commodity HTS", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "custom tariff code (no dots)", "custom tariff code", "tariff code"])
+    extid_col = _first_existing_col(sup, ["External ID", "ExternalID", "SKU 1", "sku 1"])
     msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)"])
     landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
-    grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight"])
-    gender_col = _first_existing_col(sup, ["Gender", "gender", "Genre", "genre", "Sex", "sex", "Sexe", "sexe"])
+    grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight", "Item Weight", "item weight"])
+    gender_col = _first_existing_col(sup, ["Gender", "gender", "Department", "department", "Genre", "genre", "Sex", "sex", "Sexe", "sexe"])
 
 
     # -----------------------------------------------------
@@ -974,7 +975,7 @@ def run_transform(
 
     if desc_col is None:
         raise ValueError(
-            "Colonne Description introuvable. Colonnes acceptées: Description, Style, Style Name, Product Name, Title, Display Name, Online Display Name."
+            "Colonne Description introuvable. Colonnes acceptées: Description, Style, Style Name, Product Name, Title, Display Name, Online Display Name, Name."
         )
     if msrp_col is None:
         msrp_col = None  # MSRP not found; leave prices blank per rules
@@ -1152,11 +1153,14 @@ def run_transform(
     # -----------------------------------------------------
     # Seasonality key (to apply Seasonality Tags per style)
     # -----------------------------------------------------
-    style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
+    style_num_col = _first_existing_col(sup, ["Style Code", "style code", "Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
     style_name_col = _first_existing_col(sup, ["Style Name", "style name", "Product Name", "Name"])
     sup["_seasonality_key"] = ""
     if style_num_col is not None:
         sup["_seasonality_key"] = sup[style_num_col].astype(str).fillna("").map(_clean_style_key)
+        # Satisfy: keep only before first dash (e.g., 11004-BK-SAB -> 11004)
+        if vendor_key == "satisfy":
+            sup["_seasonality_key"] = sup["_seasonality_key"].astype(str).str.split("-", n=1).str[0].map(_clean_style_key)
     elif style_name_col is not None:
         sup["_seasonality_key"] = sup[style_name_col].astype(str).fillna("").map(_clean_style_key)
 
