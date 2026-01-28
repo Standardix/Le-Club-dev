@@ -51,8 +51,8 @@ SUPPLIERS = {
     "Pas Normal Studios": run_abc,
     "Rapha": run_abc,
     "Soar": run_abc,
-    "Tracksmith": run_abc,
-    
+    "Satisfy": run_abc,
+    "Tracksmith": run_abc,    
 }
 
 st.markdown("### 1️⃣ Sélection du fournisseur")
