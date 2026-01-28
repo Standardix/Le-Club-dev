@@ -1072,6 +1072,10 @@ def run_transform(
         sup.loc[sup["_color_in"].str.upper().isin(["OS", "ONE SIZE"]), "_color_in"] = ""
 
     sup.loc[sup["_color_in"].eq(""), "_color_in"] = sup["_color_fb"]
+    # PAS Normal Studios – OS / One Size is a size, never a color (applied after fallbacks)
+    if vendor_key in ("pasnormalstudios", "pasnormalstudio"):
+        sup.loc[sup["_color_in"].astype(str).str.strip().str.upper().isin(["OS", "ONE SIZE"]), "_color_in"] = ""
+
 
     sup["_size_in"] = sup["_size_raw"]
     sup.loc[sup["_size_in"].eq(""), "_size_in"] = sup["_size_fb"]
