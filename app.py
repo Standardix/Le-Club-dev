@@ -50,6 +50,7 @@ SUPPLIERS = {
     "norda": run_abc,
     "Pas Normal Studios": run_abc,
     "Rapha": run_abc,
+    "Satisfy": run_abc,
     "Soar": run_abc,
     "Tracksmith": run_abc,
     
