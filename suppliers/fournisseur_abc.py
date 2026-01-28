@@ -950,6 +950,7 @@ def run_transform(
             "Technical Specifications", "technical specifications",
             "Product Name", "product name",
             "Title", "title", "Style", "style", "Style Name", "style name",
+            "Name", "name",
             "Display Name", "display name", "Online Display Name", "online display name",
         ],
     )
@@ -991,7 +992,7 @@ def run_transform(
 
     if desc_col is None:
         raise ValueError(
-            "Colonne Description introuvable. Colonnes acceptées: Description, Style, Style Name, Product Name, Title, Display Name, Online Display Name."
+            "Colonne Description introuvable. Colonnes acceptées: Description, Style, Style Name, Name, Product Name, Title, Display Name, Online Display Name."
         )
     if msrp_col is None:
         msrp_col = None  # MSRP not found; leave prices blank per rules
