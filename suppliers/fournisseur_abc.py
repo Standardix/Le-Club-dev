@@ -48,6 +48,7 @@ import re
 import math
 
 import pandas as pd
+import numpy as np
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font
 
@@ -234,8 +235,11 @@ SHOPIFY_OUTPUT_COLUMNS = [
 # Helpers
 # ---------------------------------------------------------
 def _norm(s) -> str:
-    return re.sub(r"\s+", " ", str(s or "").strip())
-
+    s = str(s or "").strip()
+    # Treat numeric zeros coming from supplier sheets as empty
+    if s in ("0", "0.0", "0.00"):
+        return ""
+    return re.sub(r"\s+", " ", s)
 
 
 
@@ -683,7 +687,7 @@ def _barcode_keep_zeros(x) -> str:
     if x is None:
         return ""
     s = str(x).strip()
-    if s == "" or s.lower() == "nan":
+    if s == "" or s.lower() == "nan" or s in ("0", "0.0", "0.00"):
         return ""
     # Excel floats like 123.0
     if re.fullmatch(r"\d+\.0", s):
@@ -693,6 +697,13 @@ def _barcode_keep_zeros(x) -> str:
     digits = re.sub(r"\D", "", s)
     if digits == "":
         return s
+
+    # Treat 0-only barcodes as empty
+    try:
+        if int(digits) == 0:
+            return ""
+    except Exception:
+        pass
 
     if len(digits) <= 12:
         return digits.zfill(12)
@@ -706,7 +717,7 @@ def _hs_code_clean(x) -> str:
     if x is None:
         return ""
     s = str(x).strip()
-    if s == "" or s.lower() == "nan":
+    if s == "" or s.lower() == "nan" or s in ("0", "0.0", "0.00"):
         return ""
     s = re.sub(r"\.0$", "", s)
     # Remove separators (dots/spaces/etc.)
@@ -867,6 +878,12 @@ def run_transform(
 
     sup = _read_supplier_multi_sheet(supplier_xlsx_bytes).copy()
 
+    # Satisfy: remove Totals line (often contains zeros that should not become products)
+    if vendor_key in ("satisfy",):
+        name_col_tmp = _first_existing_col(sup, ["name", "Name"])
+        if name_col_tmp:
+            sup = sup.loc[~sup[name_col_tmp].astype(str).str.strip().str.lower().eq("totals")].copy()
+
     # PAS Normal Studios: keep only rows with Order Qty >= 1 (from "Summary + Data")
     if vendor_key in ("pasnormalstudios", "pasnormalstudio"):
         order_qty_col = _first_existing_col(sup, ["Order Qty", "order qty", "Order Quantity", "order quantity"])
@@ -932,7 +949,6 @@ def run_transform(
             "Product Details", "product details",
             "Technical Specifications", "technical specifications",
             "Product Name", "product name",
-            "Name", "name",
             "Title", "title", "Style", "style", "Style Name", "style name",
             "Display Name", "display name", "Online Display Name", "online display name",
         ],
@@ -945,18 +961,18 @@ def run_transform(
         if non_empty_ratio < 0.2:
             desc_col = desc_col_fallback
 
-    product_col = _first_existing_col(sup, ["SKU 1", "sku 1", "Product", "Product Code", "SKU", "sku"])
+    product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
     color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code", "colour code and name", "Colour Code and Name", "Color Code and Name"])
     size_col = _first_existing_col(sup, ["Size 1","Size1","Size", "size", "Vendor Size1", "vendor size1"])
-    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "Barcodes", "barcodes", "bar code", "upc", "upc code"])
+    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
     ean_col = _first_existing_col(sup, ["EAN", "EAN Code", "ean", "ean code"])
     origin_col = _first_existing_col(sup, ["Country of origin", "Country of Origin", "Country Of Origin", "Country Code", "Origin", "Manufacturing Country", "COO", "country of origin", "country of origin ", "country code", "origin", "manufacturing country", "coo"])
-    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "Customs Code", "customs code", "Harmonisation Code", "harmonisation code", "Harmonization Code", "harmonization code", "hs code", "hts code", "commodity hs", "commodity hts", "Commodity HS", "Commodity HTS", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "custom tariff code (no dots)", "custom tariff code", "tariff code"])
-    extid_col = _first_existing_col(sup, ["External ID", "ExternalID", "SKU 1", "sku 1"])
+    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code", "commodity hs", "commodity hts", "Commodity HS", "Commodity HTS", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "custom tariff code (no dots)", "custom tariff code", "tariff code"])
+    extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
     msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)"])
     landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
-    grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight", "Item Weight", "item weight"])
-    gender_col = _first_existing_col(sup, ["Gender", "gender", "Department", "department", "Genre", "genre", "Sex", "sex", "Sexe", "sexe"])
+    grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight"])
+    gender_col = _first_existing_col(sup, ["Gender", "gender", "Genre", "genre", "Sex", "sex", "Sexe", "sexe"])
 
 
     # -----------------------------------------------------
@@ -975,7 +991,7 @@ def run_transform(
 
     if desc_col is None:
         raise ValueError(
-            "Colonne Description introuvable. Colonnes acceptées: Description, Style, Style Name, Product Name, Title, Display Name, Online Display Name, Name."
+            "Colonne Description introuvable. Colonnes acceptées: Description, Style, Style Name, Product Name, Title, Display Name, Online Display Name."
         )
     if msrp_col is None:
         msrp_col = None  # MSRP not found; leave prices blank per rules
@@ -1153,14 +1169,11 @@ def run_transform(
     # -----------------------------------------------------
     # Seasonality key (to apply Seasonality Tags per style)
     # -----------------------------------------------------
-    style_num_col = _first_existing_col(sup, ["Style Code", "style code", "Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
+    style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
     style_name_col = _first_existing_col(sup, ["Style Name", "style name", "Product Name", "Name"])
     sup["_seasonality_key"] = ""
     if style_num_col is not None:
         sup["_seasonality_key"] = sup[style_num_col].astype(str).fillna("").map(_clean_style_key)
-        # Satisfy: keep only before first dash (e.g., 11004-BK-SAB -> 11004)
-        if vendor_key == "satisfy":
-            sup["_seasonality_key"] = sup["_seasonality_key"].astype(str).str.split("-", n=1).str[0].map(_clean_style_key)
     elif style_name_col is not None:
         sup["_seasonality_key"] = sup[style_name_col].astype(str).fillna("").map(_clean_style_key)
 
@@ -1231,15 +1244,41 @@ def run_transform(
 
     # Price
     if detected_price_col is not None and (is_satisfy or _header_has_cad(detected_price_col)):
-        price_num = pd.to_numeric(
-            sup[detected_price_col].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
-            errors="coerce",
+        raw_price = sup[detected_price_col].astype(str).str.strip()
+
+        # Currency rules:
+        # - If EUR is present anywhere in the price indication -> keep empty
+        # - For Satisfy (where price columns are often EUR), only document CAD values
+        mask_eur = raw_price.str.contains(r"(?i)\bEUR\b|€", na=False)
+        raw_price = raw_price.mask(mask_eur, np.nan)
+
+        if is_satisfy and not _header_has_cad(detected_price_col):
+            mask_cad = raw_price.astype(str).str.contains(r"(?i)\bCAD\b", na=False)
+            raw_price = raw_price.where(mask_cad, np.nan)
+
+        # Extract numeric
+        raw_num = (
+            raw_price.astype(str)
+            .str.replace("$", "", regex=False)
+            .str.replace(",", "", regex=False)
+            .str.replace(r"(?i)\bCAD\b", "", regex=True)
+            .str.replace(r"(?i)\bEUR\b", "", regex=True)
+            .str.replace(r"[^0-9.\-]+", "", regex=True)
+            .str.strip()
         )
-        sup["_price"] = price_num.apply(_round_to_nearest_9_99)
+
+        price_num = pd.to_numeric(raw_num, errors="coerce")
+        rounded = price_num.apply(_round_to_nearest_9_99)
+
+        # No negative or zero prices
+        rounded = rounded.where(rounded > 0)
+
+        sup["_price"] = rounded
     else:
         sup["_price"] = ""
 
-    # Cost (leave blank unless CAD column detected per rules)
+
+# Cost (leave blank unless CAD column detected per rules)
     if detected_cost_col is not None and (is_satisfy or _header_has_cad(detected_cost_col)):
         sup["_cost"] = sup[detected_cost_col].astype(str).fillna("").map(_norm)
     else:
