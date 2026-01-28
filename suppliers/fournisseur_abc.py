@@ -671,13 +671,26 @@ def _extract_color_size_from_description(desc: str) -> tuple[str, str]:
 
 
 def _round_to_nearest_9_99(price) -> float:
+    """
+    Pricing rule (ALL CAD suppliers):
+    - Round to the nearest dollar (half-up)
+    - Then subtract 0.01 (ex: 115 -> 114.99)
+    - If result would be <= 0, return NaN (caller will blank the cell)
+    """
     if price is None or (isinstance(price, float) and math.isnan(price)):
         return float("nan")
-    p = float(price)
-    nearest10 = math.floor(p / 10.0 + 0.5) * 10.0
-    return round(nearest10 - 0.01, 2)
+    try:
+        p = float(price)
+    except Exception:
+        return float("nan")
 
+    # Nearest dollar, half-up
+    dollar = math.floor(p + 0.5)
+    val = round(dollar - 0.01, 2)
 
+    if val <= 0:
+        return float("nan")
+    return val
 def _barcode_keep_zeros(x) -> str:
     """Normalize barcode/UPC/EAN.
     - Keep digits only when the value is numeric.
