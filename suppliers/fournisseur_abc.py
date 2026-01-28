@@ -1253,41 +1253,50 @@ def run_transform(
         sup["_grams"] = sup["_product_type"].apply(lambda pt: variant_weight_map.get(str(pt).strip().lower(), "") if pt else "")
 
     # Price
-    if detected_price_col is not None and (is_satisfy or _header_has_cad(detected_price_col)):
-        raw_price = sup[detected_price_col].astype(str).str.strip()
-
-        # Currency rules:
-        # - If EUR is present anywhere in the price indication -> keep empty
-        # - For Satisfy (where price columns are often EUR), only document CAD values
-        mask_eur = raw_price.str.contains(r"(?i)\bEUR\b|€", na=False)
-        raw_price = raw_price.mask(mask_eur, np.nan)
-
-        if is_satisfy and not _header_has_cad(detected_price_col):
-            mask_cad = raw_price.astype(str).str.contains(r"(?i)\bCAD\b", na=False)
-            raw_price = raw_price.where(mask_cad, np.nan)
-
-        # Extract numeric
-        raw_num = (
-            raw_price.astype(str)
-            .str.replace("$", "", regex=False)
-            .str.replace(",", "", regex=False)
-            .str.replace(r"(?i)\bCAD\b", "", regex=True)
-            .str.replace(r"(?i)\bEUR\b", "", regex=True)
-            .str.replace(r"[^0-9.\-]+", "", regex=True)
-            .str.strip()
+    if detected_price_col is not None and _header_has_cad(detected_price_col):
+        # Standard CAD column: parse numeric and apply psychological rounding
+        price_num = pd.to_numeric(
+            sup[detected_price_col].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
+            errors="coerce",
         )
-
-        price_num = pd.to_numeric(raw_num, errors="coerce")
-        rounded = price_num.apply(_round_to_nearest_9_99)
-
-        # No negative or zero prices
-        rounded = rounded.where(rounded > 0)
-
-        sup["_price"] = rounded
+        sup["_price"] = price_num.apply(_round_to_nearest_9_99)
     else:
-        sup["_price"] = ""
+        # Vendor-specific override: SATISFY often provides mixed currencies in the same column.
+        if vendor_key in ("satisfy",):
+            # Try to find a usable price column even if header doesn't mention CAD
+            satisfy_price_col = _find_col(sup.columns, [
+                "Retail CAD", "Retail (CAD)", "CAD Retail", "RetailCAD", "retail cad",
+                "Retail Price (CAD)", "Cad MSRP", "MSRP", "msrp",
+                "Retail", "retail", "Price", "price", "Retail Price", "retail price",
+            ]) or detected_price_col
 
+            if satisfy_price_col:
+                price_raw = sup[satisfy_price_col].astype(str).fillna("").str.strip()
 
+                # Blank when EUR/€ is present
+                is_eur = price_raw.str.contains(r"(?i)\bEUR\b|€", regex=True)
+
+                # If any currency marker exists and it is not CAD -> blank
+                has_currency = price_raw.str.contains(r"(?i)\b(CAD|EUR|USD)\b|€|\$", regex=True)
+                is_cad = price_raw.str.contains(r"(?i)\bCAD\b", regex=True)
+                reject = is_eur | (has_currency & ~is_cad)
+
+                # Parse numeric portion
+                num = price_raw.str.replace("$", "", regex=False).str.replace(",", "", regex=False).str.extract(r"([-+]?\d*\.?\d+)")[0]
+                price_num = pd.to_numeric(num, errors="coerce")
+
+                rounded = price_num.apply(_round_to_nearest_9_99)
+
+                # Blank when rejected or non-positive (no negative/zero prices)
+                rounded = rounded.where(~reject, other=float("nan"))
+                rounded = rounded.where(rounded > 0, other=float("nan"))
+
+                # Convert NaN to "" for Shopify export
+                sup["_price"] = rounded.apply(lambda x: "" if (x is None or (isinstance(x, float) and math.isnan(x))) else x)
+            else:
+                sup["_price"] = ""
+        else:
+            sup["_price"] = ""
 # Cost (leave blank unless CAD column detected per rules)
     if detected_cost_col is not None and (is_satisfy or _header_has_cad(detected_cost_col)):
         sup["_cost"] = sup[detected_cost_col].astype(str).fillna("").map(_norm)
@@ -1467,6 +1476,36 @@ def run_transform(
         wb.save(out)
         out.seek(0)
         return out
+    def _apply_red_font_for_color_multi(buffer: io.BytesIO, sheet_name: str, cols: list[str]) -> io.BytesIO:
+        """Apply red font to specified columns when the cell contains '/' (ex: multi-colour)."""
+        buffer.seek(0)
+        wb = openpyxl.load_workbook(buffer)
+        if sheet_name not in wb.sheetnames:
+            return buffer
+        ws = wb[sheet_name]
+
+        header = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+        col_index = {str(v).strip(): i + 1 for i, v in enumerate(header) if v is not None}
+
+        red_font = openpyxl.styles.Font(color="FFFF0000")
+
+        for col_name in cols:
+            if col_name not in col_index:
+                continue
+            cidx = col_index[col_name]
+            for r in range(2, ws.max_row + 1):
+                cell = ws.cell(row=r, column=cidx)
+                v = cell.value
+                if v is None:
+                    continue
+                if "/" in str(v):
+                    cell.font = red_font
+
+        outb = io.BytesIO()
+        wb.save(outb)
+        outb.seek(0)
+        return outb
+
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -1530,6 +1569,14 @@ def run_transform(
 
     buffer = _apply_yellow_for_empty(buffer, "products", yellow_if_empty_cols)
     buffer = _apply_yellow_for_empty(buffer, "do not import", yellow_if_empty_cols)
+    # Red font for multi-colour values (contains "/") on colour columns
+    color_cols_multi = [
+        "Metafield: my_fields.colour [single_line_text_field]",
+        "Metafield: mm-google-shopping.color",
+    ]
+    buffer = _apply_red_font_for_color_multi(buffer, "products", color_cols_multi)
+    buffer = _apply_red_font_for_color_multi(buffer, "do not import", color_cols_multi)
+
 
     # Apply red font for handle conflicts (only the cell in Handle column)
     buffer = _apply_red_font_for_handle(buffer, "products", _rows_handle_conflict(products_df))
