@@ -256,7 +256,7 @@ def _strip_gender_prefix_size(v: str) -> str:
 def _strip_gender_tokens(text: str) -> str:
     """Remove embedded gender markers like -w-, - W -, -m-, etc from a string."""
     s = str(text or "")
-    # remove patterns like -w- , - W - , /w/_toggle etc surrounded by dashes/spaces
+    # remove patterns like -w- , - W - , /w/ etc surrounded by dashes/spaces
     s = re.sub(r"(?i)(\s*-\s*[wm]\s*-\s*)", " ", s)
     s = re.sub(r"(?i)(\b[wm]\b)", lambda m: "" if m.group(0).lower() in ("w","m") else m.group(0), s)
     s = re.sub(r"\s+", " ", s).strip()
@@ -660,19 +660,11 @@ def _extract_color_size_from_description(desc: str) -> tuple[str, str]:
 
 
 def _round_to_nearest_9_99(price) -> float:
-    """
-    NEW RULE:
-    - Round down to the nearest dollar, then subtract $0.01
-      Examples:
-        115.00 -> 114.99
-        117.00 -> 116.99
-        123.45 -> 122.99
-    """
     if price is None or (isinstance(price, float) and math.isnan(price)):
         return float("nan")
     p = float(price)
-    dollar_floor = math.floor(p)
-    return round(dollar_floor - 0.01, 2)
+    nearest10 = math.floor(p / 10.0 + 0.5) * 10.0
+    return round(nearest10 - 0.01, 2)
 
 
 def _barcode_keep_zeros(x) -> str:
@@ -792,6 +784,7 @@ def run_transform(
         # Column candidates duplicated from the main logic (kept local to avoid refactors).
         desc_candidates = [
             "description", "Description", "Product Name", "product name",
+            "Name", "name",
             "Title", "title", "Style", "style", "Style Name", "style name",
             "Display Name", "display name", "Online Display Name", "online display name",
             "Technical Specifications", "technical specifications",
@@ -894,6 +887,14 @@ def run_transform(
         "Retail Price (CAD)", "Cad MSRP", "MSRP", "msrp"
     ])
 
+    # -----------------------------------------------------
+    # Supplier-specific column overrides
+    # -----------------------------------------------------
+    if vendor_key in ("satisfy",):
+        # Satisfy order sheet uses generic column names and can include currency strings.
+        detected_cost_col = _find_col(sup.columns, ["wholesale", "Wholesale"])
+        detected_price_col = _find_col(sup.columns, ["retail price", "Retail Price", "retail", "Retail", "price", "Price"])
+
     wb = _load_help_wb(help_xlsx_bytes)
 
     # Standardization
@@ -938,12 +939,12 @@ def run_transform(
             desc_col = desc_col_fallback
 
     product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
-    color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code"])
+    color_col = _first_existing_col(sup, ["colour code and name", "Colour Code and Name", "Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code"])
     size_col = _first_existing_col(sup, ["Size 1","Size1","Size", "size", "Vendor Size1", "vendor size1"])
     upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
     ean_col = _first_existing_col(sup, ["EAN", "EAN Code", "ean", "ean code"])
     origin_col = _first_existing_col(sup, ["Country of origin", "Country of Origin", "Country Of Origin", "Country Code", "Origin", "Manufacturing Country", "COO", "country of origin", "country of origin ", "country code", "origin", "manufacturing country", "coo"])
-    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "custom tariff code (no dots)", "custom tariff code", "tariff code"])
+    hs_col = _first_existing_col(sup, ["commodity hs", "Commodity HS", "commodity hts", "Commodity HTS", "HS Code", "HTS Code", "hs code", "hts code", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "custom tariff code (no dots)", "custom tariff code", "tariff code"])
     extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
     msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)"])
     landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
@@ -1072,6 +1073,14 @@ def run_transform(
     sup["_brand_choice"] = _norm(brand_choice)
 
     # Title: Gender('s) + Description - Color (NON-standardized, Title Cased)
+    # -----------------------------------------------------
+    # Title rules (kept stable across suppliers)
+    # a) Gender ('s if Men/Women) + Description + " - " + Color
+    # b) Color NON-standardized (Vendor Color / Color / Colour / Color Code)
+    # c) Description from: Description, Product Name, Title, Style, Style Name, Display Name, Online Display Name
+    # d) Title Case, ® conserved
+    # e) Truncate to max 200 chars
+    # -----------------------------------------------------
     def _gender_for_title(g: str) -> str:
         gg = _norm(g)
         if gg.lower() in ("men", "women"):
@@ -1133,8 +1142,11 @@ def run_transform(
     # Custom Product Type: match using DESCRIPTION (to catch TEE / LONG SLEEVE etc.)
     sup["_product_type"] = sup["_desc_raw"].apply(lambda t: _best_match_product_type(t, product_types))
 
-    # Tags
-    style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
+    # Tags (keep standardized color/gender tags)
+    # -----------------------------------------------------
+    # Seasonality key (to apply Seasonality Tags per style)
+    # -----------------------------------------------------
+    style_num_col = _first_existing_col(sup, ["Style Code", "style code", "Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
     style_name_col = _first_existing_col(sup, ["Style Name", "style name", "Product Name", "Name"])
     sup["_seasonality_key"] = ""
     if style_num_col is not None:
@@ -1159,9 +1171,11 @@ def run_transform(
         tags.append("_badge_new")
         if r["_product_type"]:
             tags.append(r["_product_type"])
+        # Event/Promotion Related (applies to entire file)
         if event_promo_tag:
             tags.append(event_promo_tag)
 
+        # Seasonality tag (per style)
         stg = style_season_map.get(_clean_style_key(r.get("_seasonality_key", "")))
         if stg:
             tags.append(stg)
@@ -1185,6 +1199,7 @@ def run_transform(
     sup["_variant_sku"] = sup.apply(_make_sku, axis=1)
 
     # Barcode
+    # Barcode (UPC/EAN → Variant Barcode)
     sup["_barcode"] = sup[upc_col].apply(_barcode_keep_zeros) if upc_col else ""
     if ean_col:
         ean_series = sup[ean_col].apply(_barcode_keep_zeros)
@@ -1192,6 +1207,7 @@ def run_transform(
 
     # Country (standardize)
     sup["_origin_raw"] = sup[origin_col].astype(str).fillna("").map(_norm) if origin_col else ""
+    sup["_origin_raw"] = sup["_origin_raw"].str.replace(r"(?i)^made\s+in\s+", "", regex=True).str.strip()
     sup["_origin_std"] = sup["_origin_raw"].apply(lambda x: _standardize(x, country_map))
 
     # HS Code
@@ -1201,21 +1217,25 @@ def run_transform(
     if grams_col:
         sup["_grams"] = sup[grams_col].astype(str).fillna("").map(_norm)
     else:
+        # Fallback: use Help Data -> "Variant Weight (Grams)" mapped by Custom Product Type
         sup["_grams"] = sup["_product_type"].apply(lambda pt: variant_weight_map.get(str(pt).strip().lower(), "") if pt else "")
 
     # Price
-    if detected_price_col is not None and _header_has_cad(detected_price_col):
-        price_num = pd.to_numeric(
-            sup[detected_price_col].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
-            errors="coerce",
-        )
+    if detected_price_col is not None and (_header_has_cad(detected_price_col) or vendor_key in ("satisfy",)):
+        # Satisfy can contain currency strings (e.g. "EUR EUR 260.00") -> extract first number
+        sprice = sup[detected_price_col].astype(str)
+        sprice = sprice.str.replace(",", "", regex=False)
+        extracted = sprice.str.extract(r"([0-9]+(?:\.[0-9]+)?)", expand=False)
+        price_num = pd.to_numeric(extracted, errors="coerce")
         sup["_price"] = price_num.apply(_round_to_nearest_9_99)
     else:
         sup["_price"] = ""
 
     # Cost (leave blank unless CAD column detected per rules)
-    if detected_cost_col is not None and _header_has_cad(detected_cost_col):
-        sup["_cost"] = sup[detected_cost_col].astype(str).fillna("").map(_norm)
+    if detected_cost_col is not None and (_header_has_cad(detected_cost_col) or vendor_key in ("satisfy",)):
+        scost = sup[detected_cost_col].astype(str).str.replace(",", "", regex=False)
+        extracted = scost.str.extract(r"([0-9]+(?:\.[0-9]+)?)", expand=False)
+        sup["_cost"] = extracted.fillna("").map(_norm)
     else:
         sup["_cost"] = ""
 
@@ -1226,14 +1246,14 @@ def run_transform(
 
     sup["_size_comment"] = sup.apply(_size_comment, axis=1)
 
-    # Categories
+    # Categories: match using DESCRIPTION (to catch LONG SLEEVE, TEE → tshirt)
     sup["_shopify_cat_id"] = sup["_desc_raw"].apply(lambda t: _best_match_id(t, shopify_cat_rows))
     sup["_google_cat_id"] = sup["_desc_raw"].apply(lambda t: _best_match_id(t, google_cat_rows))
 
     # Siblings
     sup["_siblings"] = sup["_handle"]
 
-    # SEO Title
+    # SEO Title (adds 's for Men/Women, Title Case)
     def _seo_title(r):
         g = _norm(r["_gender_std"])
         if g.lower() in ("men", "women"):
@@ -1245,7 +1265,7 @@ def run_transform(
 
     sup["_seo_title"] = sup.apply(_seo_title, axis=1)
 
-    # SEO Description
+    # SEO Description rules
     def _seo_desc(r):
         prefix = f"Shop the {r['_seo_title']} with free worldwide shipping, and 30-day returns on leclub.cc. "
         brand_name = _norm(r["_brand_choice"] or r["_vendor"])
@@ -1388,10 +1408,10 @@ def run_transform(
             cell = ws.cell(row=excel_row, column=tags_col_idx)
             cell.font = red_font
 
-        outb = io.BytesIO()
-        wb.save(outb)
-        outb.seek(0)
-        return outb
+        out = io.BytesIO()
+        wb.save(out)
+        out.seek(0)
+        return out
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
