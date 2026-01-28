@@ -50,8 +50,8 @@ SUPPLIERS = {
     "norda": run_abc,
     "Pas Normal Studios": run_abc,
     "Rapha": run_abc,
-    "Satisfy": run_abc,
     "Soar": run_abc,
+    "Satisfy": run_abc,
     "Tracksmith": run_abc,
     
 }
@@ -82,7 +82,7 @@ def _clean_style_key(v) -> str:
     return s
 
 def _first_existing_col(cols: list[str], candidates: list[str]) -> str | None:
-    cols_l = [c.lower() for c in cols]
+    cols_l = [str(c).strip().lower() for c in cols]
     for c in candidates:
         if c.lower() in cols_l:
             return cols[cols_l.index(c.lower())]
@@ -148,6 +148,9 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
             data["Style Name"] = df[name_col].map(_clean_style_key)
         if num_col:
             data["Style Number"] = df[num_col].map(_clean_style_key)
+            # Satisfy: keep only before first dash (e.g., 11004-BK-SAB -> 11004)
+            if "satisfy" in sup_key:
+                data["Style Number"] = data["Style Number"].astype(str).str.split("-", n=1).str[0].map(_clean_style_key)
 
         tmp = pd.DataFrame(data)
         for c in tmp.columns:
