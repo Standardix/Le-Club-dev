@@ -671,26 +671,13 @@ def _extract_color_size_from_description(desc: str) -> tuple[str, str]:
 
 
 def _round_to_nearest_9_99(price) -> float:
-    """
-    Pricing rule (ALL CAD suppliers):
-    - Round to the nearest dollar (half-up)
-    - Then subtract 0.01 (ex: 115 -> 114.99)
-    - If result would be <= 0, return NaN (caller will blank the cell)
-    """
     if price is None or (isinstance(price, float) and math.isnan(price)):
         return float("nan")
-    try:
-        p = float(price)
-    except Exception:
-        return float("nan")
+    p = float(price)
+    nearest10 = math.floor(p / 10.0 + 0.5) * 10.0
+    return round(nearest10 - 0.01, 2)
 
-    # Nearest dollar, half-up
-    dollar = math.floor(p + 0.5)
-    val = round(dollar - 0.01, 2)
 
-    if val <= 0:
-        return float("nan")
-    return val
 def _barcode_keep_zeros(x) -> str:
     """Normalize barcode/UPC/EAN.
     - Keep digits only when the value is numeric.
@@ -1148,10 +1135,6 @@ def run_transform(
 
     if title_desc_col is not None:
         sup["_desc_title_norm"] = sup[title_desc_col].astype(str).fillna("").map(_norm).apply(_convert_r_to_registered)
-    # If description is long (>200 chars), use an alternate name column instead of truncating
-    if "_desc_is_long" in sup.columns and "_title_name_raw" in sup.columns:
-        mask_long = sup["_desc_is_long"] & sup["_title_name_raw"].astype(str).str.strip().ne("")
-        sup.loc[mask_long, "_desc_title_norm"] = sup.loc[mask_long, "_title_name_raw"]
     else:
         # fallback to the already built SEO description
         sup["_desc_title_norm"] = sup["_desc_seo"].astype(str).fillna("")
@@ -1314,29 +1297,11 @@ def run_transform(
                 sup["_price"] = ""
         else:
             sup["_price"] = ""
-    # Cost (leave blank unless CAD column detected per rules)
-    if vendor_key in ("satisfy",) and detected_cost_col is not None:
-        raw = sup[detected_cost_col].astype(str).fillna("").str.strip()
-
-        # Reject EUR/€ and any explicit currency marker that is not CAD
-        is_eur = raw.str.contains(r"(?i)\bEUR\b|€", regex=True)
-        has_currency = raw.str.contains(r"(?i)\b(CAD|EUR|USD)\b|€|\$", regex=True)
-        is_cad = raw.str.contains(r"(?i)\bCAD\b", regex=True)
-        reject = is_eur | (has_currency & ~is_cad)
-
-        num = raw.str.replace("$", "", regex=False).str.replace(",", "", regex=False).str.extract(r"([-+]?\d*\.?\d+)")[0]
-        cost_num = pd.to_numeric(num, errors="coerce")
-
-        # Blank if rejected or non-positive
-        cost_num = cost_num.where(~reject, other=float("nan"))
-        cost_num = cost_num.where(cost_num > 0, other=float("nan"))
-
-        sup["_cost"] = cost_num.apply(lambda x: "" if (x is None or (isinstance(x, float) and math.isnan(x))) else x)
+# Cost (leave blank unless CAD column detected per rules)
+    if detected_cost_col is not None and (is_satisfy or _header_has_cad(detected_cost_col)):
+        sup["_cost"] = sup[detected_cost_col].astype(str).fillna("").map(_norm)
     else:
-        if detected_cost_col is not None and _header_has_cad(detected_cost_col):
-            sup["_cost"] = sup[detected_cost_col].astype(str).fillna("").map(_norm)
-        else:
-            sup["_cost"] = ""
+        sup["_cost"] = ""
 
     # Size comment
     def _size_comment(r):
