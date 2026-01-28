@@ -1065,6 +1065,11 @@ def run_transform(
     sup["_size_fb"] = parsed.map(lambda t: t[1])
 
     sup["_color_in"] = sup["_color_raw"]
+
+    # PAS Normal Studios – OS / One Size is a size, never a color
+    if vendor_key in ("pasnormalstudios", "pasnormalstudio"):
+        sup.loc[sup["_color_in"].str.upper().isin(["OS", "ONE SIZE"]), "_color_in"] = ""
+
     sup.loc[sup["_color_in"].eq(""), "_color_in"] = sup["_color_fb"]
 
     sup["_size_in"] = sup["_size_raw"]
