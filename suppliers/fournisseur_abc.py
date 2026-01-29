@@ -1294,11 +1294,20 @@ def run_transform(
     sup.loc[mask_col_dup, "_color_title"] = ""
     base_title = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
 
-    # Rule: Gender + Description + " - " + Color (color non-standardized)
-    sup["_title"] = base_title
-    sup.loc[sup["_color_title"].str.strip().ne(""), "_title"] = (
-        base_title.str.strip() + " - " + sup["_color_title"].str.strip()
-    ).str.strip()
+    # Rule: Gender + Description + " - " + Color (color NON-standardized), but avoid duplicate color
+    def _append_color_if_needed(bt: str, col: str) -> str:
+        bt = str(bt or "").strip()
+        col = str(col or "").strip()
+        if not col:
+            return bt
+        if col.lower() in bt.lower():
+            return bt
+        return f"{bt} - {col}".strip()
+
+    sup["_title"] = [
+        _append_color_if_needed(bt, ct)
+        for bt, ct in zip(base_title.tolist(), sup["_color_title"].astype(str).tolist())
+    ]
 
     # Max 200 chars (truncate)
     sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
@@ -1490,6 +1499,8 @@ def run_transform(
     # 2) Title Case, preserving ® ™ and TM
     # 3) Max 200 chars
     # 4) If original supplier Description > 200 chars (moved to Body), use Style Name/Name for Description part
+        # SEO Title: aligned with Title rules
+    # Vendor + Gender ('s if Men/Women) + Description/Style Name + " - " + Color (NON-standardized)
     def _seo_base(r) -> str:
         vendor = _title_case_preserve_registered(_norm(r.get("_vendor", "")))
 
@@ -1503,9 +1514,8 @@ def run_transform(
         desc_src = _clean_desc_for_display(desc_src)
         desc_part = _title_case_preserve_registered(desc_src)
 
-        # Color NON-standardized (vendor color)
+        # Color NON-standardized, avoid duplicates and gender markers
         color_src = _norm(r.get("_color_in", ""))
-        # avoid color duplicates
         if color_src and color_src.lower() in desc_src.lower():
             color_src = ""
         color_part = _title_case_preserve_registered(color_src)
@@ -1517,7 +1527,22 @@ def run_transform(
         return str(base)[:200].rstrip()
 
     sup["_seo_title"] = sup.apply(_seo_base, axis=1)
-    sup["_seo_desc"] = sup.apply(_seo_base, axis=1)
+
+    # SEO Description: RESTORE previous behavior
+    # Prefix fixe + contenu marque (help data -> SEO Description Brand Part), sinon fallback générique
+    def _seo_desc(r):
+        prefix = f"Shop the {r['_seo_title']} with free worldwide shipping, and 30-day returns on leclub.cc. "
+        brand_name = _norm(r.get("_brand_choice") or r.get("_vendor"))
+        brand_disp = _title_case_preserve_registered(brand_name)
+
+        bkey = brand_name.strip().lower()
+        if bkey and bkey in brand_desc_map:
+            part = _norm(brand_desc_map[bkey]).rstrip().rstrip(".")
+            return f"{prefix}Discover {brand_disp} {part}."
+        return f"{prefix}Discover {brand_disp} products."
+
+    sup["_seo_desc"] = sup.apply(_seo_desc, axis=1)
+
 # behind the brand
 
     def _behind_brand(r):
