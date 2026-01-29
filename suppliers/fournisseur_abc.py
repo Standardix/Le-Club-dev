@@ -1088,16 +1088,26 @@ def run_transform(
     # -----------------------------------------------------
     # Gender inference: detect "-w-" / "- W -" / "-m-" / "- M -" in Name or SKU
     # -----------------------------------------------------
-    name_hint_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style"])
-    sku_hint_col = extid_col or product_col
+    name_hint_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style", "Description", "Display Name", "Online Display Name"])sku_hint_col = extid_col or product_col
 
     def _infer_gender_from_texts(name_val: str, sku_val: str) -> str:
-        t = f"{_norm(name_val)} {_norm(sku_val)}".lower()
-        if re.search(r"-\s*w\s*-", t):
+    # Look across name/description-like text + sku for gender signals
+    t = f"{_norm(name_val)} {_norm(sku_val)}".lower()
+
+    # Strong markers in SKUs like -w- / -m-
+    if re.search(r"-\s*w\s*-", t):
+        return "Women"
+    if re.search(r"-\s*m\s*-", t):
+        return "Men"
+
+    # Text markers (women/men, women's/men's)
+    if re.search(r"\bwomen\b|\bwomen's\b|\bwomens\b|\bfemale\b|\bw\b", t):
+        # avoid matching size "w" alone; require word women/female unless hyphen marker already handled
+        if re.search(r"\bwomen\b|\bwomen's\b|\bwomens\b|\bfemale\b", t):
             return "Women"
-        if re.search(r"-\s*m\s*-", t):
-            return "Men"
-        return ""
+    if re.search(r"\bmen\b|\bmen's\b|\bmens\b|\bmale\b", t):
+        return "Men"
+    return ""
 
     if desc_col is None:
         raise ValueError(
@@ -1712,6 +1722,19 @@ def run_transform(
 
     buffer = _apply_yellow_for_empty(buffer, "products", yellow_if_empty_cols)
     buffer = _apply_yellow_for_empty(buffer, "do not import", yellow_if_empty_cols)
+    # Red font for Title when it contains "?" or "/" (needs manual review)
+    title_warn_cols = ["Title"]
+
+    def _rows_title_warn(df_slice: pd.DataFrame) -> list[int]:
+        if "Title" not in df_slice.columns:
+            return []
+        s = df_slice["Title"].astype(str).fillna("")
+        mask = s.str.contains(r"[\?/]", regex=True)
+        return [i for i, v in enumerate(mask.tolist()) if v]
+
+    buffer = _apply_red_font_for_rows_cols(buffer, "products", _rows_title_warn(products_df), title_warn_cols)
+    buffer = _apply_red_font_for_rows_cols(buffer, "do not import", _rows_title_warn(do_not_import_df), title_warn_cols)
+
     # Red font for colour metafields when supplier colour was NOT found in Help Data mapping
     color_unmapped_cols = [
         "Metafield: my_fields.colour [single_line_text_field]",
