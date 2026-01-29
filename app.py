@@ -138,6 +138,7 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
 
 
     vendor_key = re.sub(r"[\s\-_/]+", "", str(supplier_name or "").strip().lower())
+    is_pas = vendor_key in ("pasnormalstudios", "pasnormalstudio")
     # PAS Normal Studios: use only "Summary + Data" like the transformer (ensures correct STYLE NAME)
     if vendor_key in ("pasnormalstudios", "pasnormalstudio") and "Summary + Data" in xls.sheet_names:
             sheet_names = ["Summary + Data"]
