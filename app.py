@@ -159,6 +159,21 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
     for sheet in sheet_names:
         try:
             df = pd.read_excel(xls, sheet_name=sheet)
+
+            # PAS: Force the supplier column "STYLE NAME" as the source for Style Name (when present)
+            if is_pas:
+                def _find_pas_style_name(cols: list[str]) -> str | None:
+                    def norm(x: str) -> str:
+                        return re.sub(r"\s+", " ", str(x or "")).strip().lower()
+                    for c in cols:
+                        if norm(c) == "style name":
+                            return c
+                    return None
+
+                pas_style_name_col = _find_pas_style_name(list(df.columns))
+                if pas_style_name_col:
+                    # Override candidate list so we never match other "...NAME" columns (ex: STYLE COLOR NAME)
+                    style_name_candidates = [pas_style_name_col]
         except Exception:
             continue
         if df is None or df.empty:
@@ -188,14 +203,31 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
                 if nc.startswith("style name"):
                     return c
             return None
+        # GLOBAL RULE: if a supplier column "Style Name" exists, ALWAYS use it for UX Style Name.
+        def _find_style_name_col(cols: list[str]) -> str | None:
+            def norm(x: str) -> str:
+                # collapse whitespace and lowercase for robust matching
+                return re.sub(r"\s+", " ", str(x or "")).strip().lower()
+            for c in cols:
+                nc = norm(c)
+                # accept common variants
+                if nc in ("style name", "stylename", "style_name", "style-name"):
+                    return c
+                if nc.startswith("style name"):
+                    return c
+            return None
 
-        name_col = _find_style_name_col(list(df.columns)) or _first_existing_col(list(df.columns), ["Product Name", "Name"])
+        name_col = _find_style_name_col(list(df.columns))
+        if not name_col:
+            # fallback ONLY when Style Name truly not present
+            name_col = _first_existing_col(list(df.columns), ["Product Name", "Name", "Title", "Description"])
+
         if not num_col and not name_col:
             continue
 
         data = {}
         if name_col:
-            data["Style Name"] = df[name_col].astype(str).fillna("").map(_norm)
+        data["Style Name"] = df[name_col].astype(str).fillna("").map(_norm)
         if num_col:
             data["Style Number"] = df[num_col].map(_clean_style_number_base)
 
@@ -210,6 +242,23 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
         return None
 
     out = pd.concat(rows, ignore_index=True).drop_duplicates()
+    # De-duplicate by Style Number ONLY (one row per style).
+    # If multiple Style Name values exist for the same Style Number in the supplier file,
+    # keep the most frequent value FROM THE ACTUAL "Style Name" column.
+    if "Style Number" in out.columns and "Style Name" in out.columns:
+        out["Style Number"] = out["Style Number"].astype(str).str.strip()
+        out["Style Name"] = out["Style Name"].astype(str).str.strip()
+
+        def mode_nonempty(s: pd.Series) -> str:
+            s = s.dropna().astype(str).str.strip()
+            s = s[s.ne("")]
+            if s.empty:
+                return ""
+            return s.value_counts().index[0]
+
+        agg = out.groupby("Style Number")["Style Name"].apply(mode_nonempty).reset_index()
+        out = agg
+
 
 
     cols = []
