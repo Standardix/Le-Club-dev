@@ -1088,26 +1088,24 @@ def run_transform(
     # -----------------------------------------------------
     # Gender inference: detect "-w-" / "- W -" / "-m-" / "- M -" in Name or SKU
     # -----------------------------------------------------
-    name_hint_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style", "Description", "Display Name", "Online Display Name"])sku_hint_col = extid_col or product_col
-
+    name_hint_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style", "Description", "Display Name", "Online Display Name"])
+    sku_hint_col = extid_col or product_col
     def _infer_gender_from_texts(name_val: str, sku_val: str) -> str:
-    # Look across name/description-like text + sku for gender signals
-    t = f"{_norm(name_val)} {_norm(sku_val)}".lower()
+        # Look across name/description-like text + sku for gender signals
+        t = f"{_norm(name_val)} {_norm(sku_val)}".lower()
 
-    # Strong markers in SKUs like -w- / -m-
-    if re.search(r"-\s*w\s*-", t):
-        return "Women"
-    if re.search(r"-\s*m\s*-", t):
-        return "Men"
+        # Strong markers in SKUs like -w- / -m-
+        if re.search(r"-\s*w\s*-", t):
+            return "Women"
+        if re.search(r"-\s*m\s*-", t):
+            return "Men"
 
-    # Text markers (women/men, women's/men's)
-    if re.search(r"\bwomen\b|\bwomen's\b|\bwomens\b|\bfemale\b|\bw\b", t):
-        # avoid matching size "w" alone; require word women/female unless hyphen marker already handled
+        # Text markers (women/men, women's/men's)
         if re.search(r"\bwomen\b|\bwomen's\b|\bwomens\b|\bfemale\b", t):
             return "Women"
-    if re.search(r"\bmen\b|\bmen's\b|\bmens\b|\bmale\b", t):
-        return "Men"
-    return ""
+        if re.search(r"\bmen\b|\bmen's\b|\bmens\b|\bmale\b", t):
+            return "Men"
+        return ""
 
     if desc_col is None:
         raise ValueError(
@@ -1270,9 +1268,30 @@ def run_transform(
         # fallback to the already built SEO description
         sup["_desc_title_norm"] = sup["_desc_seo"].astype(str).fillna("")
 
+    # Clean description text used for Title/SEO fields:
+    # - remove embedded gender markers like -w- / -m-
+    # - remove leading Men/Women tokens to avoid duplicates with Gender prefix
+    def _clean_desc_for_display(s: str) -> str:
+        t = _norm(s)
+        if not t:
+            return ""
+        t = _strip_gender_tokens(t)
+        # remove leading gender words (men/women/men's/women's)
+        t = re.sub(r"^(?i)(men|women)('s)?\s+", "", t).strip()
+        return t
+
+    sup["_desc_title_norm"] = sup["_desc_title_norm"].astype(str).fillna("").map(_clean_desc_for_display)
+    sup["_title_name_raw"] = sup["_title_name_raw"].astype(str).fillna("").map(_clean_desc_for_display)
+
     sup["_gender_title"] = sup["_gender_std"].astype(str).fillna("").map(_gender_for_title)
     sup["_desc_title"] = sup["_desc_title_norm"].astype(str).fillna("").map(_title_case_preserve_registered)
     sup["_color_title"] = sup["_color_in"].astype(str).fillna("").map(_title_case_preserve_registered)
+
+    # Avoid duplicating colour in Title if it is already present in the description text
+    _desc_l = sup["_desc_title_norm"].astype(str).str.lower()
+    _col_l = sup["_color_in"].astype(str).str.lower()
+    mask_col_dup = _col_l.str.strip().ne("") & _desc_l.str.contains(_col_l.str.strip(), regex=False)
+    sup.loc[mask_col_dup, "_color_title"] = ""
     base_title = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
 
     # Rule: Gender + Description + " - " + Color (color non-standardized)
@@ -1466,33 +1485,41 @@ def run_transform(
     # Siblings
     sup["_siblings"] = sup["_handle"]
 
-    # SEO Title (adds 's for Men/Women, Title Case)
-    def _seo_title(r):
-        g = _norm(r["_gender_std"])
+            # SEO Title & SEO Description rules (aligned with Title rules)
+    # 1) Vendor + Gender ('s if Men/Women) + Description + " - " + Color (NON-standardized)
+    # 2) Title Case, preserving ® ™ and TM
+    # 3) Max 200 chars
+    # 4) If original supplier Description > 200 chars (moved to Body), use Style Name/Name for Description part
+    def _seo_base(r) -> str:
+        vendor = _title_case_preserve_registered(_norm(r.get("_vendor", "")))
+
+        g = _norm(r.get("_gender_std", ""))
         if g.lower() in ("men", "women"):
             g = f"{g}'s"
-        main = f"{r['_vendor']} {g} {r['_desc_seo']}".strip()
-        main = _title_case_preserve_registered(main)
-        color = _title_case_preserve_registered(r["_color_std"])
-        return f"{main} - {color}".strip() if color else main
+        g = _title_case_preserve_registered(g)
 
-    sup["_seo_title"] = sup.apply(_seo_title, axis=1)
+        # Description part: swap to Style Name/Name when source description is long
+        desc_src = r.get("_title_name_raw") if r.get("_desc_is_long") and r.get("_title_name_raw") else r.get("_desc_seo", "")
+        desc_src = _clean_desc_for_display(desc_src)
+        desc_part = _title_case_preserve_registered(desc_src)
 
-    # SEO Description rules
-    def _seo_desc(r):
-        prefix = f"Shop the {r['_seo_title']} with free worldwide shipping, and 30-day returns on leclub.cc. "
-        brand_name = _norm(r["_brand_choice"] or r["_vendor"])
-        brand_disp = _title_case_preserve_registered(brand_name)
+        # Color NON-standardized (vendor color)
+        color_src = _norm(r.get("_color_in", ""))
+        # avoid color duplicates
+        if color_src and color_src.lower() in desc_src.lower():
+            color_src = ""
+        color_part = _title_case_preserve_registered(color_src)
 
-        bkey = brand_name.strip().lower()
-        if bkey and bkey in brand_desc_map:
-            part = _norm(brand_desc_map[bkey]).rstrip().rstrip(".")
-            return f"{prefix}Discover {brand_disp} {part}."
-        return f"{prefix}Discover {brand_disp} products."
+        base = " ".join([p for p in [vendor, g, desc_part] if p]).strip()
+        if color_part:
+            base = f"{base} - {color_part}".strip()
 
-    sup["_seo_desc"] = sup.apply(_seo_desc, axis=1)
+        return str(base)[:200].rstrip()
 
-    # behind the brand
+    sup["_seo_title"] = sup.apply(_seo_base, axis=1)
+    sup["_seo_desc"] = sup.apply(_seo_base, axis=1)
+# behind the brand
+
     def _behind_brand(r):
         bkey = (r["_brand_choice"] or "").strip().lower()
         return brand_lines_map.get(bkey, "") if bkey else ""
