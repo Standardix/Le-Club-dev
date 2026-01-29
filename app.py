@@ -176,19 +176,8 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
                     continue
 
         num_col = _first_existing_col(list(df.columns), style_number_candidates)
-        # Style Name: STRICT priority on the real supplier column (avoid matching Product Name / Name)
-        def _find_style_name_col(cols: list[str]) -> str | None:
-            def norm(x: str) -> str:
-                return re.sub(r"\s+", " ", str(x or "")).strip().lower()
-            for c in cols:
-                nc = norm(c)
-                if nc in ("style name", "stylename", "style_name"):
-                    return c
-                if nc.startswith("style name"):
-                    return c
-            return None
+        name_col = _first_existing_col(list(df.columns), style_name_candidates)
 
-        name_col = _find_style_name_col(list(df.columns)) or _first_existing_col(list(df.columns), ["Product Name", "Name"])
         if not num_col and not name_col:
             continue
 
@@ -209,6 +198,21 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
         return None
 
     out = pd.concat(rows, ignore_index=True).drop_duplicates()
+    # If multiple Style Name values exist for the same Style Number, keep the MOST FREQUENT one.
+    # (Ex: PAS "T.K.O. Falconer..." appears once, while "Falconer..." appears many times.)
+    if "Style Number" in out.columns and "Style Name" in out.columns:
+        out["Style Number"] = out["Style Number"].astype(str).str.strip()
+        out["Style Name"] = out["Style Name"].astype(str).str.strip()
+
+        def _mode_nonempty(s: pd.Series) -> str:
+            s = s.dropna().astype(str).str.strip()
+            s = s[s.ne("")]
+            if s.empty:
+                return ""
+            return s.value_counts().index[0]
+
+        name_mode = out.groupby("Style Number")["Style Name"].apply(_mode_nonempty).reset_index()
+        out = out.drop(columns=["Style Name"]).merge(name_mode, on="Style Number", how="left")
 
 
     cols = []
