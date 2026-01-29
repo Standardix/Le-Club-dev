@@ -137,12 +137,12 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
     xls = pd.ExcelFile(bio)
 
 
-        vendor_key = re.sub(r"[\s\-_/]+", "", str(supplier_name or "").strip().lower())
-        # PAS Normal Studios: use only "Summary + Data" like the transformer (ensures correct STYLE NAME)
-        if vendor_key in ("pasnormalstudios", "pasnormalstudio") and "Summary + Data" in xls.sheet_names:
+    vendor_key = re.sub(r"[\s\-_/]+", "", str(supplier_name or "").strip().lower())
+    # PAS Normal Studios: use only "Summary + Data" like the transformer (ensures correct STYLE NAME)
+    if vendor_key in ("pasnormalstudios", "pasnormalstudio") and "Summary + Data" in xls.sheet_names:
             sheet_names = ["Summary + Data"]
-        else:
-            sheet_names = list(xls.sheet_names)
+    else:
+        sheet_names = list(xls.sheet_names)
     # Prefer explicit style-number fields (avoid generic "Style" which can match a style-name field in some files)
     style_number_candidates = [
         "Style NO", "Style No", "STYLE NO", "style no",
