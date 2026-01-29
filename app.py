@@ -176,8 +176,19 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
                     continue
 
         num_col = _first_existing_col(list(df.columns), style_number_candidates)
-        name_col = _first_existing_col(list(df.columns), style_name_candidates)
+        # Style Name: STRICT priority on the real supplier column (avoid matching Product Name / Name)
+        def _find_style_name_col(cols: list[str]) -> str | None:
+            def norm(x: str) -> str:
+                return re.sub(r"\s+", " ", str(x or "")).strip().lower()
+            for c in cols:
+                nc = norm(c)
+                if nc in ("style name", "stylename", "style_name"):
+                    return c
+                if nc.startswith("style name"):
+                    return c
+            return None
 
+        name_col = _find_style_name_col(list(df.columns)) or _first_existing_col(list(df.columns), ["Product Name", "Name"])
         if not num_col and not name_col:
             continue
 
@@ -198,6 +209,7 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
         return None
 
     out = pd.concat(rows, ignore_index=True).drop_duplicates()
+
 
     cols = []
     if "Style Name" in out.columns:
