@@ -227,6 +227,7 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
 
         data = {}
         if name_col:
+            pass
         data["Style Name"] = df[name_col].astype(str).fillna("").map(_norm)
         if num_col:
             data["Style Number"] = df[num_col].map(_clean_style_number_base)
