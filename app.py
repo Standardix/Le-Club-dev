@@ -121,6 +121,11 @@ def _first_existing_col(cols: list[str], candidates: list[str]) -> str | None:
     return None
 
 
+def _norm(s) -> str:
+    """Normalize cell text for display (keep content, just collapse whitespace)."""
+    return re.sub(r"\s+", " ", str(s or "")).strip()
+
+
 def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd.DataFrame | None:
     """Extract unique styles from the supplier file.
 
