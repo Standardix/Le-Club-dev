@@ -299,10 +299,11 @@ def _convert_r_to_registered(s: str) -> str:
 
 def _title_case_preserve_registered(text: str) -> str:
     """
-    Strict Title Case while preserving ®.
+    Strict Title Case while preserving ® and ™ (and standalone TM).
     - Title-cases each space-separated token
     - Also title-cases sub-tokens split by "/" and "-"
     - Keeps tokens containing digits as-is
+    - Keeps tokens that are exactly TM as "TM"
     """
     text = _norm(text)
     if not text:
@@ -311,14 +312,21 @@ def _title_case_preserve_registered(text: str) -> str:
     def _tc_token(tok: str) -> str:
         if not tok:
             return tok
+
+        # Preserve standalone TM token
+        if tok.strip().lower() == "tm":
+            return "TM"
+
+        # Keep tokens containing digits as-is
         if any(ch.isdigit() for ch in tok):
             return tok
 
-        # preserve ® inside token
-        if "®" in tok:
-            sub = tok.split("®")
-            sub = [(_tc_token(s) if s else "") for s in sub]
-            return "®".join(sub)
+        # Preserve ® and ™ inside token
+        for sym in ("®", "™"):
+            if sym in tok:
+                sub = tok.split(sym)
+                sub = [(_tc_token(s) if s else "") for s in sub]
+                return sym.join(sub)
 
         # separators inside token
         for sep in ["/", "-"]:
@@ -1255,16 +1263,16 @@ def run_transform(
     sup["_gender_title"] = sup["_gender_std"].astype(str).fillna("").map(_gender_for_title)
     sup["_desc_title"] = sup["_desc_title_norm"].astype(str).fillna("").map(_title_case_preserve_registered)
     sup["_color_title"] = sup["_color_in"].astype(str).fillna("").map(_title_case_preserve_registered)
-
     base_title = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
+
+    # Rule: Gender + Description + " - " + Color (color non-standardized)
     sup["_title"] = base_title
     sup.loc[sup["_color_title"].str.strip().ne(""), "_title"] = (
         base_title.str.strip() + " - " + sup["_color_title"].str.strip()
     ).str.strip()
 
-    # Max 200 chars
+    # Max 200 chars (truncate)
     sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
-
     # Handle: Vendor + Gender + Description + Color (color NON-standardized)
     def _make_handle(r):
         # When description is long and moved to Body (HTML), build handle from Style Name/Name (same rule as Title)
