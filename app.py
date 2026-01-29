@@ -52,7 +52,8 @@ SUPPLIERS = {
     "Rapha": run_abc,
     "Soar": run_abc,
     "Tracksmith": run_abc,
-    
+    "Satisfy": run_abc,
+
 }
 
 st.markdown("### 1️⃣ Sélection du fournisseur")
@@ -80,12 +81,50 @@ def _clean_style_key(v) -> str:
     s = re.sub(r"^(\d+)\.0+$", r"\1", s)
     return s
 
+def _clean_style_number_base(v) -> str:
+    """
+    Seasonality UX: keep only what is BEFORE the first hyphen.
+    Example: 11000-FA-SAB -> 11000
+    """
+    s = _clean_style_key(v)
+    if not s:
+        return ""
+    return s.split("-", 1)[0].strip()
+
 def _first_existing_col(cols: list[str], candidates: list[str]) -> str | None:
-    cols_l = [c.lower() for c in cols]
-    for c in candidates:
-        if c.lower() in cols_l:
-            return cols[cols_l.index(c.lower())]
+    """
+    Robust column matcher:
+    - strip surrounding whitespace
+    - collapse internal whitespace
+    - case-insensitive
+    - fallback to contains match
+    """
+    def norm(x: str) -> str:
+        s = str(x or "")
+        s = re.sub(r"\s+", " ", s).strip().lower()
+        return s
+
+    col_map = {norm(c): c for c in cols}
+    for cand in candidates:
+        k = norm(cand)
+        if k in col_map:
+            return col_map[k]
+
+    cols_norm = [(norm(c), c) for c in cols]
+    for cand in candidates:
+        ck = norm(cand)
+        if not ck:
+            continue
+        for cn, orig in cols_norm:
+            if ck in cn:
+                return orig
     return None
+
+
+def _norm(s) -> str:
+    """Normalize cell text for display (keep content, just collapse whitespace)."""
+    return re.sub(r"\s+", " ", str(s or "")).strip()
+
 
 def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd.DataFrame | None:
     """Extract unique styles from the supplier file.
@@ -101,6 +140,7 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
     style_number_candidates = [
         "Style NO", "Style No", "STYLE NO", "style no",
         "Style Number", "Style Num", "Style #", "style number", "style #",
+        "Style Code", "style code",
     ]
     style_name_candidates = [
         "STYLE NAME", "Style Name", "Style name", "style name",
@@ -143,9 +183,9 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
 
         data = {}
         if name_col:
-            data["Style Name"] = df[name_col].map(_clean_style_key)
+            data["Style Name"] = df[name_col].astype(str).fillna("").map(_norm)
         if num_col:
-            data["Style Number"] = df[num_col].map(_clean_style_key)
+            data["Style Number"] = df[num_col].map(_clean_style_number_base)
 
         tmp = pd.DataFrame(data)
         for c in tmp.columns:
@@ -158,6 +198,22 @@ def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd
         return None
 
     out = pd.concat(rows, ignore_index=True).drop_duplicates()
+    # If multiple Style Name values exist for the same Style Number, keep the MOST FREQUENT one.
+    # (Ex: PAS "T.K.O. Falconer..." appears once, while "Falconer..." appears many times.)
+    if "Style Number" in out.columns and "Style Name" in out.columns:
+        out["Style Number"] = out["Style Number"].astype(str).str.strip()
+        out["Style Name"] = out["Style Name"].astype(str).str.strip()
+
+        def _mode_nonempty(s: pd.Series) -> str:
+            s = s.dropna().astype(str).str.strip()
+            s = s[s.ne("")]
+            if s.empty:
+                return ""
+            return s.value_counts().index[0]
+
+        name_mode = out.groupby("Style Number")["Style Name"].apply(_mode_nonempty).reset_index()
+        out = out.drop(columns=["Style Name"]).merge(name_mode, on="Style Number", how="left")
+
 
     cols = []
     if "Style Name" in out.columns:
