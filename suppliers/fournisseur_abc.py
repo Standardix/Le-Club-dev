@@ -412,6 +412,68 @@ def _standardize(val: str, mapping: dict[str, str]) -> str:
         return ""
     return mapping.get(s.lower(), s)
 
+def _build_country_code_map(mapping: dict[str, str]) -> dict[str, str]:
+    """
+    Build a more permissive country -> ISO-2 code map from Help Data.
+    Help data often contains official names like 'Moldova (the Republic of)'.
+    We add simplified keys (remove parentheses content, commas, and trailing '(the ...)' patterns)
+    so inputs like 'Moldova' still resolve to 'MD'.
+    """
+    out: dict[str, str] = {}
+    for k, v in (mapping or {}).items():
+        if not k:
+            continue
+        key = str(k).strip().lower()
+        code = str(v or "").strip()
+        if not code:
+            continue
+        out[key] = code
+
+        # simplified version: remove parenthetical content, commas, and extra spaces
+        simp = re.sub(r"\s*\(.*?\)\s*", " ", key)
+        simp = simp.replace(",", " ")
+        simp = re.sub(r"\s+", " ", simp).strip()
+        if simp:
+            out.setdefault(simp, code)
+
+        # also drop trailing ' (the ...' already handled by parentheses removal; and 'the' articles
+        simp2 = re.sub(r"\bthe\b", "", simp).strip()
+        simp2 = re.sub(r"\s+", " ", simp2).strip()
+        if simp2:
+            out.setdefault(simp2, code)
+
+    return out
+
+
+def _standardize_country(val: str, country_code_map: dict[str, str]) -> str:
+    """
+    Standardize Country of Origin to ISO-2 codes expected by Shopify.
+    - Accepts already-coded values (2 letters)
+    - Uses permissive matching against help data (simplified keys)
+    """
+    s = _norm(val)
+    if not s or s.lower() == "nan":
+        return ""
+    t = s.strip()
+    # If already looks like ISO-2 code
+    if re.fullmatch(r"[A-Za-z]{2}", t):
+        return t.upper()
+
+    key = t.lower()
+    if key in country_code_map:
+        return country_code_map[key]
+
+    simp = re.sub(r"\s*\(.*?\)\s*", " ", key)
+    simp = simp.replace(",", " ")
+    simp = re.sub(r"\s+", " ", simp).strip()
+    if simp in country_code_map:
+        return country_code_map[simp]
+
+    simp2 = re.sub(r"\bthe\b", "", simp).strip()
+    simp2 = re.sub(r"\s+", " ", simp2).strip()
+    return country_code_map.get(simp2, s)
+
+
 
 def _read_list_column(wb, sheet_name: str) -> list[str]:
     if sheet_name not in wb.sheetnames:
@@ -937,6 +999,7 @@ def run_transform(
     color_map = _read_2col_map(wb, ["Color Standardization", "Color Variable"])
     size_map = _read_2col_map(wb, ["Size Standardization", "Size Variante"])
     country_map = _read_2col_map(wb, ["Country Abbreviations", "Country of Origin"])
+    country_code_map = _build_country_code_map(country_map)
     gender_map = _read_2col_map(wb, ["Gender Standardization", "Gender"])
 
     # Categories & Product types
@@ -1257,7 +1320,7 @@ def run_transform(
 
     # Country (standardize)
     sup["_origin_raw"] = sup[origin_col].astype(str).fillna("").map(_strip_made_in) if origin_col else ""
-    sup["_origin_std"] = sup["_origin_raw"].apply(lambda x: _standardize(x, country_map))
+    sup["_origin_std"] = sup["_origin_raw"].apply(lambda x: _standardize_country(x, country_code_map))
 
     # HS Code
     sup["_hs"] = sup[hs_col].apply(_hs_code_clean) if hs_col else ""
