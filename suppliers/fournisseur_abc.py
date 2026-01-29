@@ -826,6 +826,31 @@ def _apply_yellow_for_empty(buffer: io.BytesIO, sheet_name: str, cols_to_yellow:
     out.seek(0)
     return out
 
+def _apply_red_font_for_rows_cols(buffer: io.BytesIO, sheet_name: str, rows_0based: list[int], col_names: list[str]) -> io.BytesIO:
+    """Apply red font to specific columns for the given 0-based dataframe row indexes."""
+    buffer.seek(0)
+    wb = load_workbook(buffer)
+    if sheet_name not in wb.sheetnames:
+        return buffer
+    ws = wb[sheet_name]
+
+    headers = [str(c.value or "") for c in ws[1]]
+    col_index = {h: i + 1 for i, h in enumerate(headers) if h}
+
+    red_font = Font(color="FF0000")
+    for df_i in rows_0based:
+        excel_row = df_i + 2
+        for cn in col_names:
+            if cn not in col_index:
+                continue
+            cell = ws.cell(row=excel_row, column=col_index[cn])
+            cell.font = red_font
+
+    outb = io.BytesIO()
+    wb.save(outb)
+    outb.seek(0)
+    return outb
+
 
 # ---------------------------------------------------------
 # MAIN
@@ -1158,6 +1183,8 @@ def run_transform(
 
     # Standardize
     sup["_color_std"] = sup["_color_in"].apply(lambda x: _standardize(x, color_map))
+    sup["_color_map_hit"] = sup["_color_in"].apply(lambda x: (str(_norm(x)).lower() in set(color_map.keys())) if color_map else True)
+
     sup["_size_std"] = sup["_size_in"].apply(lambda x: _standardize(x, size_map))
 
     # Gender (standardize if possible)
@@ -1209,6 +1236,12 @@ def run_transform(
         ],
     )
 
+
+    # SATISFY: prefer supplier "name" column for Title (same naming basis as handle/SEO title)
+    if vendor_key in ("satisfy",):
+        _s_name = _first_existing_col(sup, ["Name", "name"])
+        if _s_name:
+            title_desc_col = _s_name
     if title_desc_col is not None:
         sup["_desc_title_norm"] = sup[title_desc_col].astype(str).fillna("").map(_norm).apply(_convert_r_to_registered)
     # If description is long (>200 chars), use an alternate name column instead of truncating
@@ -1514,6 +1547,10 @@ def run_transform(
 
     out = out.reindex(columns=SHOPIFY_OUTPUT_COLUMNS)
 
+    # Internal flag for styling (not exported)
+    out["OUT_COLOR_HIT"] = sup.get("_color_map_hit", True)
+
+
     # Yellow rules
     yellow_if_empty_cols = [
         "Handle",
@@ -1631,8 +1668,8 @@ def run_transform(
         products_df = out.loc[~mask_existing].copy()
         do_not_import_df = out.loc[mask_existing].copy()
 
-        products_df.to_excel(writer, index=False, sheet_name="products")
-        do_not_import_df.to_excel(writer, index=False, sheet_name="do not import")
+        products_df[SHOPIFY_OUTPUT_COLUMNS].to_excel(writer, index=False, sheet_name="products")
+        do_not_import_df[SHOPIFY_OUTPUT_COLUMNS].to_excel(writer, index=False, sheet_name="do not import")
         pd.DataFrame(warnings).to_excel(writer, index=False, sheet_name="warnings")
 
     
@@ -1667,6 +1704,21 @@ def run_transform(
 
     buffer = _apply_yellow_for_empty(buffer, "products", yellow_if_empty_cols)
     buffer = _apply_yellow_for_empty(buffer, "do not import", yellow_if_empty_cols)
+    # Red font for colour metafields when supplier colour was NOT found in Help Data mapping
+    color_unmapped_cols = [
+        "Metafield: my_fields.colour [single_line_text_field]",
+        "Metafield: mm-google-shopping.color",
+    ]
+
+    def _rows_unmapped(df_slice: pd.DataFrame) -> list[int]:
+        if "OUT_COLOR_HIT" not in df_slice.columns:
+            return []
+        mask = ~df_slice["OUT_COLOR_HIT"].astype(bool)
+        return [i for i, v in enumerate(mask.tolist()) if v]
+
+    buffer = _apply_red_font_for_rows_cols(buffer, "products", _rows_unmapped(products_df), color_unmapped_cols)
+    buffer = _apply_red_font_for_rows_cols(buffer, "do not import", _rows_unmapped(do_not_import_df), color_unmapped_cols)
+
     # Red font for multi-colour values (contains "/") on colour columns
     color_cols_multi = [
         "Metafield: my_fields.colour [single_line_text_field]",
