@@ -1277,7 +1277,7 @@ def run_transform(
             return ""
         t = _strip_gender_tokens(t)
         # remove leading gender words (men/women/men's/women's)
-        t = re.sub(r"^(?i)(men|women)('s)?\s+", "", t).strip()
+        t = re.sub(r"(?i)^(men|women)('s)?\s+", "", t).strip()
         return t
 
     sup["_desc_title_norm"] = sup["_desc_title_norm"].astype(str).fillna("").map(_clean_desc_for_display)
