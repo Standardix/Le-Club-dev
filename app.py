@@ -50,10 +50,10 @@ SUPPLIERS = {
     "norda": run_abc,
     "Pas Normal Studios": run_abc,
     "Rapha": run_abc,
-    "Satisfy": run_abc,
     "Soar": run_abc,
     "Tracksmith": run_abc,
-    
+    "Satisfy": run_abc,
+
 }
 
 st.markdown("### 1️⃣ Sélection du fournisseur")
@@ -92,11 +92,34 @@ def _clean_style_number_base(v) -> str:
     return s.split("-", 1)[0].strip()
 
 def _first_existing_col(cols: list[str], candidates: list[str]) -> str | None:
-    cols_l = [c.lower() for c in cols]
-    for c in candidates:
-        if c.lower() in cols_l:
-            return cols[cols_l.index(c.lower())]
+    """
+    Robust column matcher:
+    - strip surrounding whitespace
+    - collapse internal whitespace
+    - case-insensitive
+    - fallback to contains match
+    """
+    def norm(x: str) -> str:
+        s = str(x or "")
+        s = re.sub(r"\s+", " ", s).strip().lower()
+        return s
+
+    col_map = {norm(c): c for c in cols}
+    for cand in candidates:
+        k = norm(cand)
+        if k in col_map:
+            return col_map[k]
+
+    cols_norm = [(norm(c), c) for c in cols]
+    for cand in candidates:
+        ck = norm(cand)
+        if not ck:
+            continue
+        for cn, orig in cols_norm:
+            if ck in cn:
+                return orig
     return None
+
 
 def _extract_unique_style_rows(xlsx_bytes: bytes, supplier_name: str = "") -> pd.DataFrame | None:
     """Extract unique styles from the supplier file.
