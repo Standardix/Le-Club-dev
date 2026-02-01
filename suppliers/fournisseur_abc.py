@@ -1,3 +1,4 @@
+    title_desc_col = None  # init to avoid UnboundLocalError
 from __future__ import annotations
 
 
