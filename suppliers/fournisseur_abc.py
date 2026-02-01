@@ -148,7 +148,6 @@ def _row_is_existing(brand: str, sku: str, upc: str, key_sets) -> bool:
 
 def _apply_red_font_for_handle(buffer: io.BytesIO, sheet_name: str, rows_to_color: list[int]) -> io.BytesIO:
     """Color the Handle cell red for the given 0-based row indexes (dataframe rows)."""
-        out = out.where(out.notna(), "")
     wb = load_workbook(buffer)
     ws = wb[sheet_name]
 
@@ -865,7 +864,6 @@ def _hs_code_clean(x) -> str:
 # ---------------------------------------------------------
 def _apply_yellow_for_empty(buffer: io.BytesIO, sheet_name: str, cols_to_yellow: list[str]) -> io.BytesIO:
     buffer.seek(0)
-        out = out.where(out.notna(), "")
     wb = load_workbook(buffer)
     ws = wb[sheet_name]
 
@@ -890,7 +888,6 @@ def _apply_yellow_for_empty(buffer: io.BytesIO, sheet_name: str, cols_to_yellow:
 def _apply_red_font_for_rows_cols(buffer: io.BytesIO, sheet_name: str, rows_0based: list[int], col_names: list[str]) -> io.BytesIO:
     """Apply red font to specific columns for the given 0-based dataframe row indexes."""
     buffer.seek(0)
-        out = out.where(out.notna(), "")
     wb = load_workbook(buffer)
     if sheet_name not in wb.sheetnames:
         return buffer
@@ -920,7 +917,6 @@ def _apply_header_notes(buffer: io.BytesIO, sheet_name: str, notes: dict[str, st
     Applied to the sheet's row 1 only.
     """
     buffer.seek(0)
-        out = out.where(out.notna(), "")
     wb = load_workbook(buffer)
     if sheet_name not in wb.sheetnames:
         return buffer
@@ -1863,6 +1859,7 @@ def run_transform(
     out["Inventory Available: Le Club"] = 0
 
     out = out.reindex(columns=SHOPIFY_OUTPUT_COLUMNS)
+    out = out.where(out.notna(), "")  # éviter "nan" dans l'export
 
     # Internal flag for styling (not exported)
     out["OUT_COLOR_HIT"] = sup.get("_color_map_hit", True)
