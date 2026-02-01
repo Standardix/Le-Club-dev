@@ -382,6 +382,29 @@ def _norm_handle(v) -> str:
     return s
 
 
+def _remove_size_from_handle(handle: str) -> str:
+    """
+    Supprime toute grandeur À LA FIN du handle.
+    IMPORTANT : agit UNIQUEMENT sur le handle.
+
+    Exemples supprimés :
+    - -xs, -s, -m, -l, -xl, -xxl, -xxxl
+    - -6, -6.5, -10, -10-5, etc.
+    """
+    if not handle:
+        return ""
+
+    h = str(handle).strip().lower()
+
+    # Tailles alpha à la fin
+    h = re.sub(r"-(xs|s|m|l|xl|xxl|xxxl)$", "", h)
+
+    # Tailles numériques à la fin (6, 6.5, 10-5, etc.)
+    h = re.sub(r"-\d+([.-]\d+)?$", "", h)
+
+    return h
+
+
 def _strip_gender_prefix_size(v: str) -> str:
     s = _norm(v)
     if not s:
@@ -1558,7 +1581,7 @@ def run_transform(
         ]
         parts = [p for p in parts if p and str(p).strip()]
         return slugify(" ".join(parts))
-    sup["_handle"] = sup.apply(_make_handle, axis=1)
+    sup["_handle"] = sup.apply(_make_handle, axis=1).apply(_remove_size_from_handle)
 
     # Custom Product Type: match using DESCRIPTION (to catch TEE / LONG SLEEVE etc.)
     sup["_product_type"] = sup["_desc_raw"].apply(lambda t: _best_match_product_type(t, product_types))
