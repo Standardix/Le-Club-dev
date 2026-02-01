@@ -1448,21 +1448,21 @@ def run_transform(
             return "Women's"
         return 
 
-    title_desc_col = _first_existing_col(
+    title_desc_col = _first_existing_col_with_data(
         sup,
         [
-            "Description",
+"Description",
             "Product Name",
             "Title",
             "Style",
             "Style Name",
             "Display Name",
             "Online Display Name",
+            "Name",
+            "name",
         ],
     )
-
-
-    # SATISFY: prefer supplier "name" column for Title (same naming basis as handle/SEO title)
+# SATISFY: prefer supplier "name" column for Title (same naming basis as handle/SEO title)
     if vendor_key in ("satisfy",):
         _s_name = _first_existing_col(sup, ["Name", "name"])
         if _s_name:
@@ -1473,6 +1473,12 @@ def run_transform(
     if "_desc_is_long" in sup.columns and "_title_name_raw" in sup.columns:
         mask_long = sup["_desc_is_long"] & sup["_title_name_raw"].astype(str).str.strip().ne("")
         sup.loc[mask_long, "_desc_title_norm"] = sup.loc[mask_long, "_title_name_raw"]
+        # For the remaining rows, if desc is empty, fallback to _title_name_raw then SEO description
+        _empty_desc = _series_str_clean(sup["_desc_title_norm"]).str.strip().eq("")
+        _alt = _series_str_clean(sup["_title_name_raw"]).str.strip()
+        sup.loc[_empty_desc & _alt.ne(""), "_desc_title_norm"] = sup.loc[_empty_desc & _alt.ne(""), "_title_name_raw"]
+        _empty_desc2 = _series_str_clean(sup["_desc_title_norm"]).str.strip().eq("")
+        sup.loc[_empty_desc2, "_desc_title_norm"] = _series_str_clean(sup["_desc_seo"])
     else:
         # fallback to the already built SEO description
         sup["_desc_title_norm"] = _series_str_clean(sup["_desc_seo"])
