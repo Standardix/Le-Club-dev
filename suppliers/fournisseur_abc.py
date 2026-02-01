@@ -1,4 +1,3 @@
-    title_desc_col = None  # init to avoid UnboundLocalError
 from __future__ import annotations
 
 
@@ -1426,6 +1425,7 @@ def run_transform(
     sup["_vendor"] = vendor_name
     sup["_brand_choice"] = _norm(brand_choice)
 
+    title_desc_col = None  # init to avoid UnboundLocalError
     # Title: Gender('s) + Description - Color (NON-standardized, Title Cased)
     # -----------------------------------------------------
     # Title rules (kept stable across suppliers)
