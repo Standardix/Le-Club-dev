@@ -1859,7 +1859,9 @@ def run_transform(
     out["Inventory Available: Le Club"] = 0
 
     out = out.reindex(columns=SHOPIFY_OUTPUT_COLUMNS)
-    out = out.where(out.notna(), "")  # éviter "nan" dans l'export
+    out = out.where(out.notna(), "")
+    # Also remove stringified NaN/None that can appear after astype(str)
+    out = out.replace({r"^\s*(nan|none)\s*$": ""}, regex=True)  # éviter "nan" dans l'export
 
     # Internal flag for styling (not exported)
     out["OUT_COLOR_HIT"] = sup.get("_color_map_hit", True)
