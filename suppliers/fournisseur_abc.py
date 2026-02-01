@@ -1896,7 +1896,10 @@ def run_transform(
     out = out.reindex(columns=SHOPIFY_OUTPUT_COLUMNS)
     out = out.where(out.notna(), "")
     # Also remove stringified NaN/None that can appear after astype(str)
-    out = out.replace({r"^\s*(nan|none)\s*$": ""}, regex=True)  # éviter "nan" dans l'export
+    out = out.replace({r"^\s*(nan|none)\s*$": ""}, regex=True)
+    # Remove any remaining embedded "nan" tokens (e.g., "nan - Fireclay") that can slip in via concatenation
+    out = out.replace({r"(?i)^\s*nan\s*-\s*": "", r"(?i)\bnan\b": ""}, regex=True)
+    out = out.replace({r"\s{2,}": " "}, regex=True)  # éviter "nan" dans l'export
 
     # Internal flag for styling (not exported)
     out["OUT_COLOR_HIT"] = sup.get("_color_map_hit", True)
