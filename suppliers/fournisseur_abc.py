@@ -1448,9 +1448,9 @@ def run_transform(
     # Variant SKU
     # -----------------------------------------------------
     # Règle par marque:
-    #   a) Satisfy: style code + "-" + Size
-    #   b) Norda: Style Number + "-" + Size
-    #   c) Café du Cycliste: SKU + "-" + Size
+    #   a) Satisfy: style code + "-" + mm-google-shopping.size
+    #   b) Norda: Style Number + "-" + mm-google-shopping.size
+    #   c) Café du Cycliste: SKU + "-" + mm-google-shopping.size
     #
     # Sinon (autres fournisseurs): prendre la 1ère colonne non vide dans cet ordre: SKU, SKU 1, SKU1
     # Si aucune donnée: laisser vide (et la règle de surlignage jaune existante s'applique).
@@ -1488,20 +1488,20 @@ def run_transform(
 
         if brand_key == "satisfy":
             base = _clean_hyphens(r.get("_style_code_sku", ""))
-            if base and size:
-                return f"{base}-{size}"
+            if base and mm-google-shopping.size:
+                return f"{base}-{mm-google-shopping.size}"
             return ""
 
         if brand_key == "norda":
             base = _clean_hyphens(r.get("_style_number_sku", ""))
-            if base and size:
-                return f"{base}-{size}"
+            if base and mm-google-shopping.size:
+                return f"{base}-{mm-google-shopping.size}"
             return ""
 
         if brand_key == "cafe du cycliste":
             base = _clean_hyphens(r.get("_sku_fallback", ""))
-            if base and size:
-                return f"{base}-{size}"
+            if base and mm-google-shopping.size:
+                return f"{base}-{mm-google-shopping.size}"
             return ""
 
         # Autres fournisseurs: SKU, SKU 1, SKU1 (dans cet ordre, selon le 1er rencontré)
