@@ -81,7 +81,7 @@ def _read_supplier_csv(file_like, filename: str) -> pd.DataFrame:
                     file_like.seek(0)
                 except Exception:
                     pass
-                df = _read_supplier_csv(file_like, encoding=enc, sep=sep, dtype=str, keep_default_na=False, supplier_filename)
+                df = _read_supplier_csv(file_like, supplier_filename)
                 # Heuristic: if only 1 column and header contains sep, likely wrong sep
                 if df.shape[1] == 1 and sep != ",":
                     # still allow single-column files, but try other seps first
