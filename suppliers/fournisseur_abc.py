@@ -528,6 +528,17 @@ def _first_existing_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
             return cols[c.lower()]
     return None
 
+def _first_existing_col_with_data(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    """Return first existing column among candidates that contains at least one non-empty value."""
+    for c in candidates:
+        if c in df.columns:
+            non_empty = _series_str_clean(df[c]).str.strip().ne("").any()
+            if non_empty:
+                return c
+    return None
+
+
+
 
 # ---------------------------------------------------------
 # Help data readers (openpyxl)
@@ -1232,7 +1243,7 @@ def run_transform(
     size_comment_map = _read_size_reco_map(wb)
 
     # Supplier columns
-    desc_col = _first_existing_col(
+    desc_col = _first_existing_col_with_data(
         sup,
         [
             "Description", "description",
