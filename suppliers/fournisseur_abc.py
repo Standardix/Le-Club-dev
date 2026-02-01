@@ -983,6 +983,7 @@ def run_transform(
     event_promo_tag: str = "",
     style_season_map: dict[str, str] | None = None,
     existing_shopify_xlsx_bytes: bytes | None = None,
+    supplier_filename: str = "",
 ):
     # Defensive defaults (avoid NameError when price columns absent)
     detected_cost_col = None
@@ -997,14 +998,21 @@ def run_transform(
     # -----------------------------------------------------
     # Supplier reader (multi-sheet capable)
     # -----------------------------------------------------
-    def _read_supplier_multi_sheet(xlsx_bytes: bytes) -> pd.DataFrame:
+    def _read_supplier_multi_sheet(file_bytes: bytes, file_name: str = "") -> pd.DataFrame:
         """
         Reads supplier XLSX.
         - If there are multiple sheets, keep only sheets that contain the minimum required columns
           (Description-like), then concatenate.
         - If there is a single valid sheet, behaves like the previous implementation.
         """
-        bio = io.BytesIO(xlsx_bytes)
+        # CSV support (v15): allow suppliers to provide a single CSV instead of XLSX
+        if str(file_name or "").strip().lower().endswith(".csv"):
+            try:
+                df_csv = pd.read_csv(io.BytesIO(file_bytes))
+            except Exception as e:
+                raise ValueError(f"Impossible de lire le CSV fournisseur: {e}")
+            return df_csv
+        bio = io.BytesIO(file_bytes)
         xls = pd.ExcelFile(bio)
 
         # Supplier-specific override: PAS Normal Studios uses only "Summary + Data"
@@ -1096,7 +1104,7 @@ def run_transform(
             )
         return pd.concat(dfs, ignore_index=True, sort=False)
 
-    sup = _read_supplier_multi_sheet(supplier_xlsx_bytes).copy()
+    sup = _read_supplier_multi_sheet(supplier_xlsx_bytes, supplier_filename).copy()
 
     # Satisfy: remove Totals line (often contains zeros that should not become products)
     if vendor_key in ("satisfy",):
