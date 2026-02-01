@@ -188,6 +188,18 @@ def _sanitize_nan(df):
 
 YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
+def _norm(x) -> str:
+    """Normalize input to clean string; treat NaN/None/'nan'/'none' as empty."""
+    if x is None:
+        return ""
+    # pandas/numpy NaN
+    if isinstance(x, float) and math.isnan(x):
+        return ""
+    s = str(x).replace("\u00A0", " ").strip()
+    if s.lower() in ("nan", "none"):
+        return ""
+    return s
+
 # ---------------------------------------------------------
 # ORDRE FINAL DES COLONNES (strict)
 # ---------------------------------------------------------
