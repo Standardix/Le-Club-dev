@@ -529,14 +529,20 @@ def _first_existing_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 def _first_existing_col_with_data(df: pd.DataFrame, candidates: list[str]) -> str | None:
-    """Return first existing column among candidates that contains at least one non-empty value."""
-    for c in candidates:
-        if c in df.columns:
-            non_empty = _series_str_clean(df[c]).str.strip().ne("").any()
-            if non_empty:
-                return c
+    """Return first candidate column that exists AND has at least one non-empty value."""
+    cols = {c.lower(): c for c in df.columns}
+    for cand in candidates:
+        key = cand.lower()
+        if key in cols:
+            col = cols[key]
+            s = df[col]
+            # normalize empties without turning NaN into 'nan'
+            s_clean = s.fillna("").astype(str).str.strip()
+            # treat literal tokens 'nan'/'none' as empty too
+            s_clean = s_clean.replace({r"(?i)^\s*(nan|none)\s*$": ""}, regex=True)
+            if s_clean.ne("").any():
+                return col
     return None
-
 
 
 
