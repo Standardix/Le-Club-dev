@@ -66,6 +66,43 @@ import unicodedata
 
 import pandas as pd
 
+def _read_supplier_csv(file_like, filename: str) -> pd.DataFrame:
+    """Read supplier CSV robustly (encoding + delimiter)."""
+    # Common encodings for supplier exports
+    encodings = ["utf-8-sig", "utf-8", "cp1252", "latin1"]
+    # Common delimiters (comma, semicolon, tab)
+    seps = [",", ";", "	"]
+    last_err = None
+    for enc in encodings:
+        for sep in seps:
+            try:
+                # Reset pointer if possible
+                try:
+                    file_like.seek(0)
+                except Exception:
+                    pass
+                df = _read_supplier_csv(file_like, encoding=enc, sep=sep, dtype=str, keep_default_na=False, supplier_filename)
+                # Heuristic: if only 1 column and header contains sep, likely wrong sep
+                if df.shape[1] == 1 and sep != ",":
+                    # still allow single-column files, but try other seps first
+                    pass
+                return df
+            except Exception as e:
+                last_err = e
+                continue
+    # Final fallback: decode with replacement to avoid crash
+    try:
+        try:
+            file_like.seek(0)
+        except Exception:
+            pass
+        df = pd.read_csv(file_like, encoding="cp1252", sep=",", dtype=str, keep_default_na=False, encoding_errors="replace")
+        return df
+    except Exception as e:
+        last_err = e
+    raise ValueError(f"Impossible de lire le CSV fournisseur ({filename}). Encodages testés: {encodings}. Dernière erreur: {last_err}")
+
+
 def _series_str_clean(s: pd.Series) -> pd.Series:
     """Convert a series to clean strings without 'nan'/'none' tokens."""
     s2 = s.fillna("").astype(str).replace({r"^\s*(nan|none)\s*$": ""}, regex=True)
