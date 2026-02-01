@@ -1857,6 +1857,11 @@ def run_transform(
     _k = sup["_style_key_v12"].astype(str).str.strip()
     counts = _k[_k.ne("")].value_counts()
     mask_single_style = _k.map(lambda x: counts.get(x, 0) == 1 if x else False)
+    # Ne pas forcer "Default Title" si une vraie taille est présente (ex: XS, S, M, etc.)
+    _size_clean = sup["_size_std"].map(_strip_gender_prefix_size).astype(str).str.strip()
+    _dash_tokens = {"-", "–", "—"}
+    mask_has_real_size = _size_clean.ne("") & (~sup["_size_std"].astype(str).apply(_is_onesize)) & (~_size_clean.isin(_dash_tokens))
+    mask_single_style = mask_single_style & (~mask_has_real_size)
     sup.loc[mask_single_style, "_opt1_name"] = "Title"
     sup.loc[mask_single_style, "_opt1_value"] = "Default Title"
 
@@ -2157,6 +2162,19 @@ def run_transform(
 
     buffer = _apply_red_font_for_rows_cols(buffer, "products", _rows_unmapped(products_df), color_unmapped_cols)
     buffer = _apply_red_font_for_rows_cols(buffer, "do not import", _rows_unmapped(do_not_import_df), color_unmapped_cols)
+
+    # Red font for size metafield when supplier size was NOT found in Help Data mapping
+    size_unmapped_cols = ["Variant Metafield: mm-google-shopping.size"]
+
+    def _rows_size_unmapped(df_slice: pd.DataFrame) -> list[int]:
+        if "OUT_SIZE_HIT" not in df_slice.columns:
+            return []
+        mask = ~df_slice["OUT_SIZE_HIT"].astype(bool)
+        return [i for i, v in enumerate(mask.tolist()) if v]
+
+    buffer = _apply_red_font_for_rows_cols(buffer, "products", _rows_size_unmapped(products_df), size_unmapped_cols)
+    buffer = _apply_red_font_for_rows_cols(buffer, "do not import", _rows_size_unmapped(do_not_import_df), size_unmapped_cols)
+
 
     # Red font for multi-colour values (contains "/") on colour columns
     color_cols_multi = [
