@@ -1707,6 +1707,36 @@ def run_transform(
     sup.loc[mask_single_style, "_opt1_value"] = "Default Title"
 
 # ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # Variant SKU + MPN rules (after Option1 is finalized)
+    # ---------------------------------------------------------
+    def _clean_hyphens_sku(s: str) -> str:
+        # remove spaces around hyphens and normalize whitespace
+        return re.sub(r"\s*-\s*", "-", _norm(s))
+
+    def _make_variant_sku(r):
+        # Identify brand/vendor (case-insensitive)
+        brand_key = _norm_key(r.get("_brand_choice", "")) or _norm_key(r.get("_vendor", ""))
+        size = _clean_hyphens_sku(r.get("_opt1_value", ""))
+
+        if brand_key == "satisfy":
+            base = _clean_hyphens_sku(r.get("_style_code_sku", ""))
+            return f"{base}-{size}" if base and size else ""
+
+        if brand_key == "norda":
+            base = _clean_hyphens_sku(r.get("_style_number_sku", ""))
+            return f"{base}-{size}" if base and size else ""
+
+        if brand_key in ("cafe du cycliste", "café du cycliste"):
+            base = _clean_hyphens_sku(r.get("_sku_fallback", ""))
+            return f"{base}-{size}" if base and size else ""
+
+        # Other suppliers: first non-empty among SKU / SKU 1 / SKU1 (already resolved into _sku_fallback)
+        base = _clean_hyphens_sku(r.get("_sku_fallback", ""))
+        return base if base else ""
+
+    sup["_variant_sku"] = sup.apply(_make_variant_sku, axis=1)
+
     # Build output (strict order)
     # ---------------------------------------------------------
     out = pd.DataFrame(columns=SHOPIFY_OUTPUT_COLUMNS)
@@ -1797,6 +1827,8 @@ def run_transform(
         "Variant Metafield: mm-google-shopping.size",
         "Metafield: mm-google-shopping.google_product_category",
         "Category: ID",
+        "Variant SKU",
+        "Variant Metafield: mm-google-shopping.mpn",
     ]
 
     def _apply_red_font_for_tags(buffer: io.BytesIO, sheet_name: str, rows_to_color_red: list[int]) -> io.BytesIO:
