@@ -46,6 +46,7 @@ def _header_has_cad(col_name: str) -> bool:
 import io
 import re
 import math
+import unicodedata
 
 import pandas as pd
 import numpy as np
@@ -174,6 +175,7 @@ def _apply_red_font_for_handle(buffer: io.BytesIO, sheet_name: str, rows_to_colo
 import io
 import re
 import math
+import unicodedata
 import pandas as pd
 import openpyxl
 from openpyxl import load_workbook
@@ -241,6 +243,14 @@ def _norm(s) -> str:
     if s in ("0", "0.0", "0.00"):
         return ""
     return re.sub(r"\s+", " ", s)
+
+
+
+def _norm_key(s) -> str:
+    """Key normalization: trim, lowercase, remove accents."""
+    t = _norm(s).lower()
+    t = "".join(c for c in unicodedata.normalize("NFKD", t) if not unicodedata.combining(c))
+    return t
 
 
 
@@ -1435,17 +1445,73 @@ def run_transform(
     sup["_external_id"] = sup[extid_col].astype(str).fillna("").map(_norm) if extid_col else ""
     sup["_product_code"] = sup[product_col].astype(str).fillna("").map(_norm) if product_col else ""
 
+    # Variant SKU
+    # -----------------------------------------------------
+    # Règle par marque:
+    #   a) Satisfy: style code + "-" + Size
+    #   b) Norda: Style Number + "-" + Size
+    #   c) Café du Cycliste: SKU + "-" + Size
+    #
+    # Sinon (autres fournisseurs): prendre la 1ère colonne non vide dans cet ordre: SKU, SKU 1, SKU1
+    # Si aucune donnée: laisser vide (et la règle de surlignage jaune existante s'applique).
+    sku_col = _first_existing_col(sup, ["SKU", "SKU 1", "SKU1", "sku", "sku 1", "sku1"])
+    sku1_col = _first_existing_col(sup, ["SKU 1", "sku 1"])
+    sku1_nospace_col = _first_existing_col(sup, ["SKU1", "sku1"])
+
+    style_code_col = _first_existing_col(
+        sup,
+        ["Style Code", "Style code", "STYLE CODE", "Style ID", "Style", "Style Number", "Style No", "Style #", "Style#"],
+    )
+    style_number_col = _first_existing_col(
+        sup,
+        ["Style Number", "Style Num", "Style #", "Style#", "style number", "style #", "Style No", "Style"],
+    )
+
+    sup["_style_code_sku"] = sup[style_code_col].astype(str).fillna("").map(_norm) if style_code_col else ""
+    sup["_style_number_sku"] = sup[style_number_col].astype(str).fillna("").map(_norm) if style_number_col else ""
+    sup["_sku_fallback"] = ""
+    if sku_col is not None:
+        sup["_sku_fallback"] = sup[sku_col].astype(str).fillna("").map(_norm)
+    if sku1_col is not None:
+        s2 = sup[sku1_col].astype(str).fillna("").map(_norm)
+        sup["_sku_fallback"] = sup["_sku_fallback"].where(sup["_sku_fallback"].ne(""), s2)
+    if sku1_nospace_col is not None:
+        s3 = sup[sku1_nospace_col].astype(str).fillna("").map(_norm)
+        sup["_sku_fallback"] = sup["_sku_fallback"].where(sup["_sku_fallback"].ne(""), s3)
+
+    def _clean_hyphens(s: str) -> str:
+        return re.sub(r"\s*-\s*", "-", _norm(s))
+
     def _make_sku(r):
-        # Rule v12: Only populate SKU when we have a reliable identifier from the supplier.
-        # If we don't have enough info (no External ID and no Product Code/SKU column),
-        # we leave it blank (and it will be highlighted in yellow by the existing rules).
-        if r["_external_id"]:
-            return r["_external_id"]
-        if r["_product_code"]:
-            return r["_product_code"]
+        brand_key = _norm_key(r.get("_brand_choice", "")) or _norm_key(r.get("_vendor", ""))
+        size = _clean_hyphens(r.get("_opt1_value", ""))
+
+        if brand_key == "satisfy":
+            base = _clean_hyphens(r.get("_style_code_sku", ""))
+            if base and size:
+                return f"{base}-{size}"
+            return ""
+
+        if brand_key == "norda":
+            base = _clean_hyphens(r.get("_style_number_sku", ""))
+            if base and size:
+                return f"{base}-{size}"
+            return ""
+
+        if brand_key == "cafe du cycliste":
+            base = _clean_hyphens(r.get("_sku_fallback", ""))
+            if base and size:
+                return f"{base}-{size}"
+            return ""
+
+        # Autres fournisseurs: SKU, SKU 1, SKU1 (dans cet ordre, selon le 1er rencontré)
+        base = _clean_hyphens(r.get("_sku_fallback", ""))
+        if base:
+            return base
         return ""
 
     sup["_variant_sku"] = sup.apply(_make_sku, axis=1)
+
 
     # Barcode
     # Barcode (UPC/EAN → Variant Barcode)
