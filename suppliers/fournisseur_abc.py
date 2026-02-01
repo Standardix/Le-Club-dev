@@ -49,6 +49,12 @@ import math
 import unicodedata
 
 import pandas as pd
+
+def _series_str_clean(s: pd.Series) -> pd.Series:
+    """Convert a series to clean strings without 'nan'/'none' tokens."""
+    s2 = s.fillna("").astype(str).replace({r"^\s*(nan|none)\s*$": ""}, regex=True)
+    return s2
+
 import numpy as np
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font
@@ -1157,7 +1163,7 @@ def run_transform(
     # If we picked Technical Specifications but it is mostly empty, fallback to Description when available.
     desc_col_fallback = _first_existing_col(sup, ["Description", "description"])
     if desc_col and _colkey(desc_col) in ("technicalspecifications", "technicalspecification") and desc_col_fallback:
-        non_empty_ratio = sup[desc_col].astype(str).fillna("").str.strip().ne("").mean() if len(sup) else 0
+        non_empty_ratio = _series_str_clean(sup[desc_col]).str.strip().ne("").mean() if len(sup) else 0
         if non_empty_ratio < 0.2:
             desc_col = desc_col_fallback
 
@@ -1246,7 +1252,7 @@ def run_transform(
 
     
     # Base description (keep both a normalized version and the original source text)
-    sup["_desc_source"] = sup[desc_col].astype(str).fillna("")  # preserve original (length, punctuation, line breaks)
+    sup["_desc_source"] = _series_str_clean(sup[desc_col])  # preserve original (length, punctuation, line breaks)
     sup["_desc_raw"] = sup["_desc_source"].map(_norm)
     sup["_desc_seo"] = sup["_desc_raw"].apply(_convert_r_to_registered)
     sup["_desc_handle"] = sup.apply(lambda r: _strip_reg_for_handle(r["_title_name_raw"]) if r.get("_desc_is_long") and r.get("_title_name_raw") else _strip_reg_for_handle(r["_desc_raw"]), axis=1)
@@ -1257,7 +1263,7 @@ def run_transform(
     # and build Title from Style Name / Name instead of the long description.
     # -----------------------------------------------------
     title_name_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style"])
-    sup["_title_name_raw"] = sup[title_name_col].astype(str).fillna("").map(_norm) if title_name_col else ""
+    sup["_title_name_raw"] = _series_str_clean(sup[title_name_col]).map(_norm) if title_name_col else ""
 
     sup["_desc_is_long"] = sup["_desc_source"].apply(lambda x: len(str(x)) > 200)
 
@@ -1266,8 +1272,8 @@ def run_transform(
     # Clean HTML-ish artifacts in Body (HTML)
     sup["_body_html"] = sup["_body_html"].map(_sanitize_text_like_html)
     # Color / Size input
-    sup["_color_raw"] = sup[color_col].astype(str).fillna("").map(_norm) if color_col else ""
-    sup["_size_raw"] = sup[size_col].astype(str).fillna("").map(_norm) if size_col else ""
+    sup["_color_raw"] = _series_str_clean(sup[color_col]).map(_norm) if color_col else ""
+    sup["_size_raw"] = _series_str_clean(sup[size_col]).map(_norm) if size_col else ""
 
     # Fallback parse from description if missing
     parsed = sup["_desc_raw"].apply(_extract_color_size_from_description)
@@ -1296,7 +1302,7 @@ def run_transform(
     sup["_size_std"] = sup["_size_in"].apply(lambda x: _standardize(x, size_map))
 
     # Gender (standardize if possible)
-    sup["_gender_raw"] = sup[gender_col].astype(str).fillna("").map(_norm) if gender_col else ""
+    sup["_gender_raw"] = _series_str_clean(sup[gender_col]).map(_norm) if gender_col else ""
 
     sup["_gender_inferred"] = sup.apply(
         lambda r: _infer_gender_from_texts(
@@ -1359,14 +1365,14 @@ def run_transform(
         if _s_name:
             title_desc_col = _s_name
     if title_desc_col is not None:
-        sup["_desc_title_norm"] = sup[title_desc_col].astype(str).fillna("").map(_norm).apply(_convert_r_to_registered)
+        sup["_desc_title_norm"] = _series_str_clean(sup[title_desc_col]).map(_norm).apply(_convert_r_to_registered)
     # If description is long (>200 chars), use an alternate name column instead of truncating
     if "_desc_is_long" in sup.columns and "_title_name_raw" in sup.columns:
         mask_long = sup["_desc_is_long"] & sup["_title_name_raw"].astype(str).str.strip().ne("")
         sup.loc[mask_long, "_desc_title_norm"] = sup.loc[mask_long, "_title_name_raw"]
     else:
         # fallback to the already built SEO description
-        sup["_desc_title_norm"] = sup["_desc_seo"].astype(str).fillna("")
+        sup["_desc_title_norm"] = _series_str_clean(sup["_desc_seo"])
 
     # Clean description text used for Title/SEO fields:
     # - remove embedded gender markers like -w- / -m-
@@ -1380,12 +1386,12 @@ def run_transform(
         t = re.sub(r"(?i)^(men|women|unisex)(\'s)?\s+", "", t).strip()
         return t
 
-    sup["_desc_title_norm"] = sup["_desc_title_norm"].astype(str).fillna("").map(_clean_desc_for_display)
-    sup["_title_name_raw"] = sup["_title_name_raw"].astype(str).fillna("").map(_clean_desc_for_display)
+    sup["_desc_title_norm"] = _series_str_clean(sup["_desc_title_norm"]).map(_clean_desc_for_display)
+    sup["_title_name_raw"] = _series_str_clean(sup["_title_name_raw"]).map(_clean_desc_for_display)
 
-    sup["_gender_title"] = sup["_gender_std"].astype(str).fillna("").map(_gender_for_title)
-    sup["_desc_title"] = sup["_desc_title_norm"].astype(str).fillna("").map(_title_case_preserve_registered)
-    sup["_color_title"] = sup["_color_in"].astype(str).fillna("").map(_title_case_preserve_registered)
+    sup["_gender_title"] = _series_str_clean(sup["_gender_std"]).map(_gender_for_title)
+    sup["_desc_title"] = _series_str_clean(sup["_desc_title_norm"]).map(_title_case_preserve_registered)
+    sup["_color_title"] = _series_str_clean(sup["_color_in"]).map(_title_case_preserve_registered)
 
     # Avoid duplicating colour in Title if it is already present in the description text
     _desc_l = sup["_desc_title_norm"].astype(str).str.lower()
@@ -1442,9 +1448,9 @@ def run_transform(
     style_name_col = _first_existing_col(sup, ["Style Name", "style name", "Product Name", "Name"])
     sup["_seasonality_key"] = ""
     if style_num_col is not None:
-        sup["_seasonality_key"] = sup[style_num_col].astype(str).fillna("").map(_clean_style_key)
+        sup["_seasonality_key"] = _series_str_clean(sup[style_num_col]).map(_clean_style_key)
     elif style_name_col is not None:
-        sup["_seasonality_key"] = sup[style_name_col].astype(str).fillna("").map(_clean_style_key)
+        sup["_seasonality_key"] = _series_str_clean(sup[style_name_col]).map(_clean_style_key)
 
     def _make_tags(r):
         tags = []
@@ -1477,8 +1483,8 @@ def run_transform(
     sup["_tags"] = sup.apply(_make_tags, axis=1)
 
     # SKU
-    sup["_external_id"] = sup[extid_col].astype(str).fillna("").map(_norm) if extid_col else ""
-    sup["_product_code"] = sup[product_col].astype(str).fillna("").map(_norm) if product_col else ""
+    sup["_external_id"] = _series_str_clean(sup[extid_col]).map(_norm) if extid_col else ""
+    sup["_product_code"] = _series_str_clean(sup[product_col]).map(_norm) if product_col else ""
 
     # Variant SKU
     # -----------------------------------------------------
@@ -1502,16 +1508,16 @@ def run_transform(
         ["Style Number", "Style Num", "Style #", "Style#", "style number", "style #", "Style No", "Style"],
     )
 
-    sup["_style_code_sku"] = sup[style_code_col].astype(str).fillna("").map(_norm) if style_code_col else ""
-    sup["_style_number_sku"] = sup[style_number_col].astype(str).fillna("").map(_norm) if style_number_col else ""
+    sup["_style_code_sku"] = _series_str_clean(sup[style_code_col]).map(_norm) if style_code_col else ""
+    sup["_style_number_sku"] = _series_str_clean(sup[style_number_col]).map(_norm) if style_number_col else ""
     sup["_sku_fallback"] = ""
     if sku_col is not None:
-        sup["_sku_fallback"] = sup[sku_col].astype(str).fillna("").map(_norm)
+        sup["_sku_fallback"] = _series_str_clean(sup[sku_col]).map(_norm)
     if sku1_col is not None:
-        s2 = sup[sku1_col].astype(str).fillna("").map(_norm)
+        s2 = _series_str_clean(sup[sku1_col]).map(_norm)
         sup["_sku_fallback"] = sup["_sku_fallback"].where(sup["_sku_fallback"].ne(""), s2)
     if sku1_nospace_col is not None:
-        s3 = sup[sku1_nospace_col].astype(str).fillna("").map(_norm)
+        s3 = _series_str_clean(sup[sku1_nospace_col]).map(_norm)
         sup["_sku_fallback"] = sup["_sku_fallback"].where(sup["_sku_fallback"].ne(""), s3)
 
     def _clean_hyphens(s: str) -> str:
@@ -1567,7 +1573,7 @@ def run_transform(
         gtin1_series = sup[gtin1_col].apply(_barcode_keep_zeros)
         sup["_barcode"] = sup["_barcode"].where(sup["_barcode"].astype(str).str.strip().ne(""), gtin1_series)
     # Country (standardize)
-    sup["_origin_raw"] = sup[origin_col].astype(str).fillna("").map(_strip_made_in) if origin_col else ""
+    sup["_origin_raw"] = _series_str_clean(sup[origin_col]).map(_strip_made_in) if origin_col else ""
     sup["_origin_std"] = sup["_origin_raw"].apply(lambda x: _standardize_country(x, country_code_map))
 
     # HS Code
@@ -1575,7 +1581,7 @@ def run_transform(
 
     # Grams
     if grams_col:
-        sup["_grams"] = sup[grams_col].astype(str).fillna("").map(_norm)
+        sup["_grams"] = _series_str_clean(sup[grams_col]).map(_norm)
     else:
         # Fallback: use Help Data -> "Variant Weight (Grams)" mapped by Custom Product Type
         sup["_grams"] = sup["_product_type"].apply(lambda pt: variant_weight_map.get(str(pt).strip().lower(), "") if pt else "")
@@ -1599,7 +1605,7 @@ def run_transform(
             ]) or detected_price_col
 
             if satisfy_price_col:
-                price_raw = sup[satisfy_price_col].astype(str).fillna("").str.strip()
+                price_raw = _series_str_clean(sup[satisfy_price_col]).str.strip()
 
                 # Blank when EUR/€ is present
                 is_eur = price_raw.str.contains(r"(?i)\bEUR\b|€", regex=True)
@@ -1627,7 +1633,7 @@ def run_transform(
             sup["_price"] = ""
     # Cost (leave blank unless CAD column detected per rules)
     if vendor_key in ("satisfy",) and detected_cost_col is not None:
-        raw = sup[detected_cost_col].astype(str).fillna("").str.strip()
+        raw = _series_str_clean(sup[detected_cost_col]).str.strip()
 
         # Reject EUR/€ and any explicit currency marker that is not CAD
         is_eur = raw.str.contains(r"(?i)\bEUR\b|€", regex=True)
@@ -1645,7 +1651,7 @@ def run_transform(
         sup["_cost"] = cost_num.apply(lambda x: "" if (x is None or (isinstance(x, float) and math.isnan(x))) else x)
     else:
         if detected_cost_col is not None and _header_has_cad(detected_cost_col):
-            sup["_cost"] = sup[detected_cost_col].astype(str).fillna("").map(_norm)
+            sup["_cost"] = _series_str_clean(sup[detected_cost_col]).map(_norm)
         else:
             sup["_cost"] = ""
 
@@ -1734,7 +1740,7 @@ def run_transform(
             composition_col = c
             break
     if composition_col is not None:
-        sup["_product_features"] = sup[composition_col].astype(str).fillna("").map(_sanitize_text_like_html)
+        sup["_product_features"] = _series_str_clean(sup[composition_col]).map(_sanitize_text_like_html)
     else:
         sup["_product_features"] = ""
 
@@ -1757,9 +1763,9 @@ def run_transform(
     style_name_col_v12 = _first_existing_col(sup, ["Style Name", "style name", "STYLE NAME", "Product Name", "Name"])
     sup["_style_key_v12"] = ""
     if style_num_col_v12 is not None:
-        sup["_style_key_v12"] = sup[style_num_col_v12].astype(str).fillna("").map(_clean_style_key)
+        sup["_style_key_v12"] = _series_str_clean(sup[style_num_col_v12]).map(_clean_style_key)
     elif style_name_col_v12 is not None:
-        sup["_style_key_v12"] = sup[style_name_col_v12].astype(str).fillna("").map(_clean_style_key)
+        sup["_style_key_v12"] = _series_str_clean(sup[style_name_col_v12]).map(_clean_style_key)
 
     _k = sup["_style_key_v12"].astype(str).str.strip()
     counts = _k[_k.ne("")].value_counts()
@@ -2040,7 +2046,7 @@ def run_transform(
     def _rows_title_warn(df_slice: pd.DataFrame) -> list[int]:
         if "Title" not in df_slice.columns:
             return []
-        s = df_slice["Title"].astype(str).fillna("")
+        s = _series_str_clean(df_slice["Title"])
         mask = s.str.contains(r"[\?/]", regex=True)
         return [i for i, v in enumerate(mask.tolist()) if v]
 
