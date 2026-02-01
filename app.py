@@ -6,6 +6,27 @@ import hashlib
 import pandas as pd
 import re
 
+
+def _read_csv_bytes(file_bytes: bytes) -> pd.DataFrame:
+    """Robust CSV reader for supplier files (encoding + delimiter)."""
+    encodings = ["utf-8-sig", "utf-8", "cp1252", "latin1"]
+    seps = [",", ";", "	"]
+    last_err = None
+    for enc in encodings:
+        for sep in seps:
+            try:
+                return pd.read_csv(io.BytesIO(file_bytes), encoding=enc, sep=sep, dtype=str, keep_default_na=False)
+            except Exception as e:
+                last_err = e
+                continue
+    # final fallback: replace undecodable chars
+    try:
+        return pd.read_csv(io.BytesIO(file_bytes), encoding="cp1252", sep=",", dtype=str, keep_default_na=False, encoding_errors="replace")
+    except Exception as e:
+        last_err = e
+    raise ValueError(f"Impossible de lire le CSV (encodage). Dernière erreur: {last_err}")
+
+
 from suppliers.fournisseur_abc import run_transform as run_abc
 
 st.set_page_config(page_title="Générateur Shopify – Fichiers fournisseurs", layout="wide")
@@ -136,7 +157,7 @@ def _extract_unique_style_rows(file_bytes: bytes, supplier_name: str = "", file_
     is_csv = str(file_name or "").strip().lower().endswith(".csv")
     if is_csv:
         try:
-            df0 = pd.read_csv(io.BytesIO(file_bytes))
+            df0 = _read_csv_bytes(file_bytes)
         except Exception:
             return None
 
