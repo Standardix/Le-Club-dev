@@ -1,6 +1,22 @@
 from __future__ import annotations
 
 
+def _scrub_nan_token_in_title(s: str) -> str:
+    """Remove accidental 'nan' tokens that can appear when concatenating missing fields."""
+    if s is None:
+        return ""
+    t = str(s).replace("\u00A0", " ").strip()
+    # remove leading 'nan - ' patterns
+    t = re.sub(r"(?i)^\s*nan\s*-\s*", "", t)
+    # remove standalone ' nan ' tokens (rare) and clean double spaces
+    t = re.sub(r"(?i)\bnan\b", "", t)
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    # remove leftover leading/trailing hyphens
+    t = re.sub(r"^\s*-\s*", "", t)
+    t = re.sub(r"\s*-\s*$", "", t)
+    return t
+
+
 def _norm_upc(v) -> str:
     """Normalize UPC/Barcode: keep digits only, drop trailing .0 from numeric."""
     if v is None:
@@ -1707,6 +1723,7 @@ def run_transform(
 
     sup["_seo_title"] = sup.apply(_seo_base, axis=1)
 
+    sup["_seo_title"] = sup["_seo_title"].apply(_scrub_nan_token_in_title)
     # SEO Description: RESTORE previous behavior
     # Prefix fixe + contenu marque (help data -> SEO Description Brand Part), sinon fallback générique
     def _seo_desc(r):
