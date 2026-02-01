@@ -67,40 +67,64 @@ import unicodedata
 import pandas as pd
 
 def _read_supplier_csv(file_like, filename: str) -> pd.DataFrame:
-    """Read supplier CSV robustly (encoding + delimiter)."""
-    # Common encodings for supplier exports
+    """Read supplier CSV robustly (encoding + delimiter).
+
+    - Tries several encodings (utf-8-sig/utf-8/cp1252/latin1).
+    - Tries common delimiters and also auto-detects (sep=None).
+    - Keeps empty cells empty (avoid NaN) with keep_default_na=False.
+    """
     encodings = ["utf-8-sig", "utf-8", "cp1252", "latin1"]
-    # Common delimiters (comma, semicolon, tab)
-    seps = [",", ";", "	"]
+
+    # 1) Try auto delimiter detection first for each encoding
     last_err = None
+    for enc in encodings:
+        try:
+            try:
+                file_like.seek(0)
+            except Exception:
+                pass
+            df = pd.read_csv(
+                file_like,
+                encoding=enc,
+                sep=None,
+                engine="python",
+                dtype=str,
+                keep_default_na=False,
+                encoding_errors="replace",
+            )
+            return df
+        except Exception as e:
+            last_err = e
+
+    # 2) Fallback: try explicit separators
+    seps = [",", ";", "	", "|"]
     for enc in encodings:
         for sep in seps:
             try:
-                # Reset pointer if possible
                 try:
                     file_like.seek(0)
                 except Exception:
                     pass
-                df = _read_supplier_csv(file_like, supplier_filename)
-                # Heuristic: if only 1 column and header contains sep, likely wrong sep
-                if df.shape[1] == 1 and sep != ",":
-                    # still allow single-column files, but try other seps first
-                    pass
+                df = pd.read_csv(
+                    file_like,
+                    encoding=enc,
+                    sep=sep,
+                    engine="python",
+                    dtype=str,
+                    keep_default_na=False,
+                    encoding_errors="replace",
+                )
+                # If we parsed a single giant column, try other seps
+                if df.shape[1] == 1 and sep != seps[-1]:
+                    continue
                 return df
             except Exception as e:
                 last_err = e
-                continue
-    # Final fallback: decode with replacement to avoid crash
-    try:
-        try:
-            file_like.seek(0)
-        except Exception:
-            pass
-        df = pd.read_csv(file_like, encoding="cp1252", sep=",", dtype=str, keep_default_na=False, encoding_errors="replace")
-        return df
-    except Exception as e:
-        last_err = e
-    raise ValueError(f"Impossible de lire le CSV fournisseur ({filename}). Encodages testés: {encodings}. Dernière erreur: {last_err}")
+
+    raise ValueError(
+        f"Impossible de lire le CSV fournisseur ({filename}). Encodages testés: {encodings}. Dernière erreur: {last_err}"
+    )
+
 
 
 def _series_str_clean(s: pd.Series) -> pd.Series:
@@ -1045,10 +1069,11 @@ def run_transform(
         # CSV support (v15): allow suppliers to provide a single CSV instead of XLSX
         if str(file_name or "").strip().lower().endswith(".csv"):
             try:
-                df_csv = pd.read_csv(io.BytesIO(file_bytes))
+                df_csv = _read_supplier_csv(io.BytesIO(file_bytes), file_name)
             except Exception as e:
                 raise ValueError(f"Impossible de lire le CSV fournisseur: {e}")
             return df_csv
+
         bio = io.BytesIO(file_bytes)
         xls = pd.ExcelFile(bio)
 
@@ -1057,7 +1082,7 @@ def run_transform(
         if vendor_key in ("pasnormalstudios", "pasnormalstudio"):
             target_sheet = "Summary + Data"
             if target_sheet in xls.sheet_names:
-                df = pd.read_excel(io.BytesIO(xlsx_bytes), sheet_name=target_sheet, dtype=str)
+                df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=target_sheet, dtype=str)
                 df = df.dropna(how="all")
                 if df is None or df.empty:
                     raise ValueError('Onglet "Summary + Data" vide dans le fichier fournisseur.')
@@ -1079,7 +1104,7 @@ def run_transform(
 
         dfs: list[pd.DataFrame] = []
         for sn in xls.sheet_names:
-            df = pd.read_excel(io.BytesIO(xlsx_bytes), sheet_name=sn, dtype=str)
+            df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=sn, dtype=str)
             # --- Price columns (robust) ---
             cost_col = _find_col(df.columns, [
                 "Wholesale CAD", "Wholesale (CAD)", "CAD Wholesale", "WholesaleCAD", "wholesale cad"
