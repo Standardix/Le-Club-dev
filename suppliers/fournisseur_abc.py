@@ -209,7 +209,7 @@ SHOPIFY_OUTPUT_COLUMNS = [
     "Variant Price",
     "Variant Requires Shipping",
     "Variant Taxable",
-    "SEO Title  # conserve la logique existante (Men / Women / Unisex)",
+    "SEO Title",
     "SEO Description",
     "Variant Weight Unit",
     "Cost per item",
@@ -1617,18 +1617,18 @@ def run_transform(
     # Siblings
     sup["_siblings"] = sup["_handle"]
 
-            # SEO Title  # conserve la logique existante (Men / Women / Unisex) & SEO Description rules (aligned with Title rules)
+            # SEO Title & SEO Description rules (aligned with Title rules)
     # 1) Vendor + Gender ('s if Men/Women) + Description + " - " + Color (NON-standardized)
     # 2) Title Case, preserving ® ™ and TM
     # 3) Max 200 chars
     # 4) If original supplier Description > 200 chars (moved to Body), use Style Name/Name for Description part
-        # SEO Title  # conserve la logique existante (Men / Women / Unisex): aligned with Title rules
+        # SEO Title: aligned with Title rules
     # Vendor + Gender ('s if Men/Women) + Description/Style Name + " - " + Color (NON-standardized)
     def _seo_base(r) -> str:
         vendor = _title_case_preserve_registered(_norm(r.get("_vendor", "")))
 
         g = _norm(r.get("_gender_std", ""))
-        # SEO Title  # conserve la logique existante (Men / Women / Unisex): same gender rule as Title (ONLY Women's; never Men/Unisex)
+        # SEO Title: same gender rule as Title (ONLY Women's; never Men/Unisex)
         gl = g.lower().replace("’", "'") if g else ""
         if gl in ("women", "womens", "women's", "female", "femme", "femmes"):
             g = "Women's"
@@ -1717,7 +1717,12 @@ def run_transform(
     def _make_variant_sku(r):
         # Identify brand/vendor (case-insensitive)
         brand_key = _norm_key(r.get("_brand_choice", "")) or _norm_key(r.get("_vendor", ""))
-        size = _clean_hyphens_sku(r.get("_opt1_value", ""))
+                # Size doit provenir de 'Variant Metafield: mm-google-shopping.size' (via _size_std)
+        size_raw = _strip_gender_prefix_size(r.get("_size_std", ""))
+        size = _clean_hyphens_sku(size_raw)
+        # Ne jamais utiliser 'Default Title' comme taille
+        if _norm_key(size) in ("default title", "default", "default value"):
+            size = ""
 
         if brand_key == "satisfy":
             base = _clean_hyphens_sku(r.get("_style_code_sku", ""))
@@ -1769,7 +1774,7 @@ def run_transform(
     out["Variant Requires Shipping"] = True
     out["Variant Taxable"] = True
 
-    out["SEO Title  # conserve la logique existante (Men / Women / Unisex)"] = sup["_seo_title"]
+    out["SEO Title"] = sup["_seo_title"]
     out["SEO Description"] = sup["_seo_desc"]
 
     out["Variant Weight Unit"] = "g"
@@ -1818,7 +1823,7 @@ def run_transform(
         "Variant Grams",
         "Variant Country of Origin",
         "Variant HS Code",
-        "SEO Title  # conserve la logique existante (Men / Women / Unisex)",
+        "SEO Title",
         "SEO Description",
         "Metafield: my_fields.size_comment [single_line_text_field]",
         "Metafield: my_fields.gender [single_line_text_field]",
@@ -1962,7 +1967,7 @@ def run_transform(
     buffer = _apply_yellow_for_empty(buffer, "products", yellow_if_empty_cols)
     buffer = _apply_yellow_for_empty(buffer, "do not import", yellow_if_empty_cols)
     # Red font for Title when it contains "?" or "/" (needs manual review)
-    title_warn_cols = ["Title", "SEO Title  # conserve la logique existante (Men / Women / Unisex)"]
+    title_warn_cols = ["Title", "SEO Title"]
 
     def _rows_title_warn(df_slice: pd.DataFrame) -> list[int]:
         if "Title" not in df_slice.columns:
@@ -2005,7 +2010,7 @@ def run_transform(
     header_notes = {
         "Handle": "ROUGE = Le handle existe déjà dans le fichier d’inventaire fourni.",
         "Title": "ROUGE = Le titre comporte un des deux caractères suivants: ? ou /.",
-        "SEO Title  # conserve la logique existante (Men / Women / Unisex)": "ROUGE = Le titre comporte un des deux caractères suivants: ? ou /.",
+        "SEO Title": "ROUGE = Le titre comporte un des deux caractères suivants: ? ou /.",
         "Tags": "ROUGE = Assurez-vous que les tags Seasonal sont bien les bons.",
         "Metafield: my_fields.colour [single_line_text_field]": "ROUGE = Les couleurs ne sont pas présentes dans le mapping (Help Data).",
         "Metafield: mm-google-shopping.color": "ROUGE = Les couleurs ne sont pas présentes dans le mapping (Help Data).",
