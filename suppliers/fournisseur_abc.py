@@ -254,6 +254,22 @@ def _norm_key(s) -> str:
 
 
 
+
+def _sanitize_text_like_html(v) -> str:
+    """Remove HTML-ish artifacts (<br>, &nbsp;) and normalize whitespace."""
+    if v is None:
+        return ""
+    s = str(v)
+    # Normalize common HTML breaks to newlines
+    s = re.sub(r"(?i)<br\s*/?>", "\n", s)
+    # Convert non-breaking spaces
+    s = s.replace("&nbsp;", " ").replace("\xa0", " ")
+    # Collapse excessive spaces but keep newlines
+    s = re.sub(r"[ \t\f\v]+", " ", s)
+    # Clean up multiple newlines
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
 def _strip_made_in(s: str) -> str:
     t = _norm(s)
     # remove common prefixes like "Made In "
@@ -1230,6 +1246,8 @@ def run_transform(
 
     # Put the original description in Body (HTML) when long (not the normalized one)
     sup["_body_html"] = sup.apply(lambda r: str(r["_desc_source"]).strip() if r["_desc_is_long"] else "", axis=1)
+    # Clean HTML-ish artifacts in Body (HTML)
+    sup["_body_html"] = sup["_body_html"].map(_sanitize_text_like_html)
     # Color / Size input
     sup["_color_raw"] = sup[color_col].astype(str).fillna("").map(_norm) if color_col else ""
     sup["_size_raw"] = sup[size_col].astype(str).fillna("").map(_norm) if size_col else ""
@@ -1514,12 +1532,23 @@ def run_transform(
 
 
     # Barcode
-    # Barcode (UPC/EAN → Variant Barcode)
+    # Variant Barcode: conserver la logique actuelle (UPC puis EAN),
+    # et ajouter GTIN puis GTIN 1 (dans cet ordre) comme fallbacks supplémentaires.
+    gtin_col = _first_existing_col(sup, ["GTIN", "gtin"])
+    gtin1_col = _first_existing_col(sup, ["GTIN 1", "GTIN1", "gtin 1", "gtin1"])
+
     sup["_barcode"] = sup[upc_col].apply(_barcode_keep_zeros) if upc_col else ""
     if ean_col:
         ean_series = sup[ean_col].apply(_barcode_keep_zeros)
         sup["_barcode"] = sup["_barcode"].where(sup["_barcode"].astype(str).str.strip().ne(""), ean_series)
 
+    if gtin_col is not None:
+        gtin_series = sup[gtin_col].apply(_barcode_keep_zeros)
+        sup["_barcode"] = sup["_barcode"].where(sup["_barcode"].astype(str).str.strip().ne(""), gtin_series)
+
+    if gtin1_col is not None:
+        gtin1_series = sup[gtin1_col].apply(_barcode_keep_zeros)
+        sup["_barcode"] = sup["_barcode"].where(sup["_barcode"].astype(str).str.strip().ne(""), gtin1_series)
     # Country (standardize)
     sup["_origin_raw"] = sup[origin_col].astype(str).fillna("").map(_strip_made_in) if origin_col else ""
     sup["_origin_std"] = sup["_origin_raw"].apply(lambda x: _standardize_country(x, country_code_map))
@@ -1678,6 +1707,21 @@ def run_transform(
 
     sup["_behind_the_brand"] = sup.apply(_behind_brand, axis=1)
 
+    # ---------------------------------------------------------
+    # Composition -> Metafield: my_fields.product_features
+    # ---------------------------------------------------------
+    # If a column named 'composition' (any case) exists, map it to product_features.
+    composition_col = None
+    for c in list(sup.columns):
+        if _colkey(c) == "composition":
+            composition_col = c
+            break
+    if composition_col is not None:
+        sup["_product_features"] = sup[composition_col].astype(str).fillna("").map(_sanitize_text_like_html)
+    else:
+        sup["_product_features"] = ""
+
+
     
     # ---------------------------------------------------------
     # v12 Option1 rules
@@ -1777,12 +1821,16 @@ def run_transform(
     out["SEO Title"] = sup["_seo_title"]
     out["SEO Description"] = sup["_seo_desc"]
 
+    # Final safety: ensure no <br> or &nbsp; artifacts in text fields
+    out["Body (HTML)"] = out["Body (HTML)"].map(_sanitize_text_like_html)
+    out["Metafield: my_fields.product_features [multi_line_text_field]"] = out["Metafield: my_fields.product_features [multi_line_text_field]"].map(_sanitize_text_like_html)
+
     out["Variant Weight Unit"] = "g"
     out["Cost per item"] = sup["_cost"]
     out["Status"] = "draft"
 
     out["Metafield: my_fields.product_use_case [multi_line_text_field]"] = ""
-    out["Metafield: my_fields.product_features [multi_line_text_field]"] = ""
+    out["Metafield: my_fields.product_features [multi_line_text_field]"] = sup["_product_features"]
     out["Metafield: my_fields.behind_the_brand [multi_line_text_field]"] = sup["_behind_the_brand"]
     out["Metafield: my_fields.size_comment [single_line_text_field]"] = sup["_size_comment"]
     out["Metafield: my_fields.gender [single_line_text_field]"] = sup["_gender_std"]
