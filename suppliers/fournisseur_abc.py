@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 
 def clean_seo(text):
@@ -5,7 +7,6 @@ def clean_seo(text):
         return text
     return re.sub(r"""\s*(?:-|/)?\s*(?:size\s*)?(?:xs|s|m|l|xl|xxl)\b""", "", text, flags=re.IGNORECASE)
 
-from __future__ import annotations
 
 
 def _scrub_nan_token_in_title(s: str) -> str:
