@@ -1,3 +1,10 @@
+import re
+
+def clean_seo(text):
+    if not isinstance(text, str):
+        return text
+    return re.sub(r"""\s*(?:-|/)?\s*(?:size\s*)?(?:xs|s|m|l|xl|xxl)\b""", "", text, flags=re.IGNORECASE)
+
 from __future__ import annotations
 
 
@@ -2158,6 +2165,8 @@ def run_transform(
 
         products_df = out.loc[~mask_existing].copy()
         do_not_import_df = out.loc[mask_existing].copy()
+# Ensuring products already existing in Shopify go to do_not_import
+
 
         products_df[SHOPIFY_OUTPUT_COLUMNS].to_excel(writer, index=False, sheet_name="products")
         do_not_import_df[SHOPIFY_OUTPUT_COLUMNS].to_excel(writer, index=False, sheet_name="do not import")
