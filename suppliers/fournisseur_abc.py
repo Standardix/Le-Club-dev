@@ -752,14 +752,42 @@ def _read_product_type_gendered_map(wb, sheet_name: str = "Product Types") -> di
       Col A: Custom Product Type
       Col B: 'Genré' or 'NON Genré' (can be blank)
 
+    Returns a dict[normalized_product_type -> is_gendered_bool].
+
+    Normalization:
+      - lowercased + trimmed
+      - we also add simple singular/plural variants so that:
+          "Water Bottle" (help data) matches "Water Bottles" (output)
+          "Vest" matches "Vests", etc.
+
     Rules:
       - If Col B contains 'non' => NON Genré => False
-      - If Col B contains 'gen' => Genré => True
-      - If blank/unknown => default True (keep previous behavior)
+      - Otherwise => True (keep previous behavior)
     """
     if sheet_name not in wb.sheetnames:
         return {}
     ws = wb[sheet_name]
+
+    def _norm_pt(x: str) -> str:
+        s = str(x or "").strip().lower()
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    def _singularize(s: str) -> str:
+        # very small heuristic: Water Bottles -> Water Bottle, Vests -> Vest, etc.
+        t = _norm_pt(s)
+        if t.endswith("s") and len(t) >= 4 and not t.endswith("ss"):
+            return t[:-1]
+        return t
+
+    def _pluralize(s: str) -> str:
+        t = _norm_pt(s)
+        if not t:
+            return t
+        if t.endswith("s"):
+            return t
+        return t + "s"
+
     m: dict[str, bool] = {}
     for r in range(2, ws.max_row + 1):
         pt = ws.cell(row=r, column=1).value
@@ -769,17 +797,23 @@ def _read_product_type_gendered_map(wb, sheet_name: str = "Product Types") -> di
         pt_s = str(pt).strip()
         if not pt_s or pt_s.lower() == "nan":
             continue
-        key = pt_s.strip().lower()
 
         flag_s = "" if flag is None else str(flag).strip().lower()
         # normalize accents (minimal)
         flag_s = flag_s.replace("é", "e").replace("è", "e").replace("ê", "e").replace("à", "a").replace("ô", "o")
-        if "non" in flag_s:
-            m[key] = False
-        elif "gen" in flag_s:
-            m[key] = True
-        else:
-            m[key] = True
+
+        is_gendered = False if ("non" in flag_s) else True
+
+        base = _norm_pt(pt_s)
+        if not base:
+            continue
+
+        # store base + variants
+        keys = {base, _singularize(base), _pluralize(base), _pluralize(_singularize(base))}
+        for k in keys:
+            if k:
+                m[k] = is_gendered
+
     return m
 
 
@@ -1699,7 +1733,15 @@ def run_transform(
         sup["_product_type_src_raw"].fillna("")
     ).astype(str).str.lower()
 
-    # Keyword overrides (case-insensitive) – priority order matters (e.g., "long bibs" before "bibs")
+    
+
+    # If Custom Product Type is still empty, try matching again using a richer text blob
+    # (Title + Style Name/Name + Description + optional source product type).
+    sup["_product_type"] = sup["_product_type"].where(
+        sup["_product_type"].astype(str).str.strip().ne(""),
+        _pt_blob.apply(lambda t: _best_match_product_type(t, product_types)),
+    )
+# Keyword overrides (case-insensitive) – priority order matters (e.g., "long bibs" before "bibs")
     sup.loc[_pt_blob.str.contains(r"\blong\s+bibs\b", regex=True), "_product_type"] = "Bib Tights"
     sup.loc[_pt_blob.str.contains(r"\bbibs\b", regex=True), "_product_type"] = "Bib Shorts"
     sup.loc[_pt_blob.str.contains(r"\bgilet\b", regex=True), "_product_type"] = "Vests"
