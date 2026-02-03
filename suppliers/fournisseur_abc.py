@@ -1643,9 +1643,30 @@ def run_transform(
         return slugify(" ".join(parts))
     sup["_handle"] = sup.apply(_make_handle, axis=1).apply(_remove_size_from_handle)
 
-    # Custom Product Type: match using DESCRIPTION (to catch TEE / LONG SLEEVE etc.)
+    # Custom Product Type: match using multiple fields (description + title + optional source product type)
+    # This ensures keywords like Gilet/Bibs/Long Bibs/Bidon/Baselayer are detected even if not present in DESCRIPTION.
     sup["_product_type"] = sup["_desc_raw"].apply(lambda t: _best_match_product_type(t, product_types))
-    sup["_product_type"] = sup["_product_type"].apply(map_custom_product_type)
+
+    # Optional: use a source product type column from supplier file if present
+    product_type_src_col = _first_existing_col(sup, ["Product Type", "product type", "Type", "Category", "Product category", "Product Category"])
+    sup["_product_type_src_raw"] = ""
+    if product_type_src_col is not None:
+        sup["_product_type_src_raw"] = _series_str_clean(sup[product_type_src_col])
+
+    _pt_blob = (
+        sup["_title_raw"].fillna("") + " " +
+        sup["_desc_raw"].fillna("") + " " +
+        sup["_product_type_src_raw"].fillna("")
+    ).astype(str).str.lower()
+
+    # Keyword overrides (case-insensitive) – priority order matters (e.g., "long bibs" before "bibs")
+    sup.loc[_pt_blob.str.contains(r"\blong\s+bibs\b", regex=True), "_product_type"] = "Bib Tights"
+    sup.loc[_pt_blob.str.contains(r"\bbibs\b", regex=True), "_product_type"] = "Bib Shorts"
+    sup.loc[_pt_blob.str.contains(r"\bgilet\b", regex=True), "_product_type"] = "Vests"
+    sup.loc[_pt_blob.str.contains(r"\bbidon\b", regex=True), "_product_type"] = "Water Bottles"
+    sup.loc[_pt_blob.str.contains(r"\bbaselayer\b", regex=True), "_product_type"] = "Base Layer"
+    sup.loc[_pt_blob.str.contains(r"\bt[-\s]?shirt\b", regex=True), "_product_type"] = "T-Shirts"
+    sup.loc[_pt_blob.str.contains(r"\btee\b", regex=True), "_product_type"] = "T-Shirts"
 
     # Tags (keep standardized color/gender tags)
     # -----------------------------------------------------
