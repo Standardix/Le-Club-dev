@@ -1776,9 +1776,11 @@ def run_transform(
     # -----------------------------------------------------
     # Product type gendering (Help Data -> Product Types)
     # -----------------------------------------------------
-    # Default behavior is considered "Genré" unless explicitly marked NON Genré.
+    # Default behavior:
+    # - If Custom Product Type is EMPTY -> treat as NON Genré (unknown), so we do NOT force "Men".
+    # - Otherwise: considered "Genré" unless explicitly marked NON Genré in Help Data.
     sup["_is_gendered"] = sup["_product_type"].apply(
-        lambda pt: product_type_gendered_map.get(str(pt or "").strip().lower(), True) if str(pt or "").strip() else True
+        lambda pt: product_type_gendered_map.get(str(pt or "").strip().lower(), True) if str(pt or "").strip() else False
     )
 
     # Gender to export:
