@@ -1654,7 +1654,7 @@ def run_transform(
         sup["_product_type_src_raw"] = _series_str_clean(sup[product_type_src_col])
 
     _pt_blob = (
-        sup["_title_raw"].fillna("") + " " +
+        sup.get("_title", "").fillna("") + " " + sup.get("_title_name_raw", "").fillna("") + " " +
         sup["_desc_raw"].fillna("") + " " +
         sup["_product_type_src_raw"].fillna("")
     ).astype(str).str.lower()
