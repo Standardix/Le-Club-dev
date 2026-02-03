@@ -16,7 +16,7 @@ def map_custom_product_type(val: str) -> str:
         "gilet": "Vests",
         "bibs": "Bib Shorts",
         "long bibs": "Bib Tights",
-        "bidon": "Water Bottles",
+        "bidon": "Water Bottle",
         "baselayer": "Base Layer",
         # keep existing convention for tees
         "t-shirt": "T-Shirts",
@@ -1394,6 +1394,25 @@ def run_transform(
     shopify_cat_rows = _read_category_rows(wb, "Shopify Product Category")
     google_cat_rows = _read_category_rows(wb, "Google Product Category")
     product_types = _read_list_column(wb, "Product Types")
+
+    # Canonical Product Type resolver:
+    # Output Custom Product Type MUST match EXACTLY one value from Help Data -> Product Types (col A).
+    _pt_canon = { _norm_key(pt): pt for pt in (product_types or []) if _norm(pt) }
+
+    def _canon_product_type(pt: str) -> str:
+        s = _norm(pt)
+        if not s:
+            return ""
+        k = _norm_key(s)
+        if k in _pt_canon:
+            return _pt_canon[k]
+        # singular/plural tolerance (only for matching; returns canonical from Help Data)
+        if k.endswith("s") and k[:-1] in _pt_canon:
+            return _pt_canon[k[:-1]]
+        if (k + "s") in _pt_canon:
+            return _pt_canon[k + "s"]
+        return s
+
     product_type_gendered_map = _read_product_type_gendered_map(wb, "Product Types")
     variant_weight_map = _read_variant_weight_map(wb)
 
@@ -1742,13 +1761,16 @@ def run_transform(
         _pt_blob.apply(lambda t: _best_match_product_type(t, product_types)),
     )
 # Keyword overrides (case-insensitive) – priority order matters (e.g., "long bibs" before "bibs")
-    sup.loc[_pt_blob.str.contains(r"\blong\s+bibs\b", regex=True), "_product_type"] = "Bib Tights"
-    sup.loc[_pt_blob.str.contains(r"\bbibs\b", regex=True), "_product_type"] = "Bib Shorts"
-    sup.loc[_pt_blob.str.contains(r"\bgilet\b", regex=True), "_product_type"] = "Vests"
-    sup.loc[_pt_blob.str.contains(r"\bbidon\b", regex=True), "_product_type"] = "Water Bottles"
-    sup.loc[_pt_blob.str.contains(r"\bbaselayer\b", regex=True), "_product_type"] = "Base Layer"
-    sup.loc[_pt_blob.str.contains(r"\bt[-\s]?shirt\b", regex=True), "_product_type"] = "T-Shirts"
-    sup.loc[_pt_blob.str.contains(r"\btee\b", regex=True), "_product_type"] = "T-Shirts"
+    sup.loc[_pt_blob.str.contains(r"\blong\s+bibs\b", regex=True), "_product_type"] = _canon_product_type("Bib Tights")
+    sup.loc[_pt_blob.str.contains(r"\bbibs\b", regex=True), "_product_type"] = _canon_product_type("Bib Shorts")
+    sup.loc[_pt_blob.str.contains(r"\bgilet\b", regex=True), "_product_type"] = _canon_product_type("Vests")
+    sup.loc[_pt_blob.str.contains(r"\bbidon\b", regex=True), "_product_type"] = _canon_product_type("Water Bottle")
+    sup.loc[_pt_blob.str.contains(r"\bbaselayer\b", regex=True), "_product_type"] = _canon_product_type("Base Layer")
+    sup.loc[_pt_blob.str.contains(r"\bt[-\s]?shirt\b", regex=True), "_product_type"] = _canon_product_type("T-Shirts")
+    sup.loc[_pt_blob.str.contains(r"\btee\b", regex=True), "_product_type"] = _canon_product_type("T-Shirts")
+    # Final enforcement: always output canonical Product Types from Help Data
+    sup["_product_type"] = sup["_product_type"].apply(_canon_product_type)
+
 
 
     # -----------------------------------------------------
