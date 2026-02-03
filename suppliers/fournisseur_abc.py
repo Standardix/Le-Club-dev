@@ -5,23 +5,37 @@ import re
 
 
 def map_custom_product_type(val: str) -> str:
-    if not val:
+    """Map supplier product types to Shopify Custom Product Type (case-insensitive)."""
+    if val is None:
         return val
-
+    if not isinstance(val, str):
+        val = str(val)
     v = val.strip().lower()
 
-    if "t-shirt" in v or "t shirt" in v:
-        return "T-Shirts"
-    if "gilet" in v:
-        return "Vests"
+    mapping = {
+        "gilet": "Vests",
+        "bibs": "Bib Shorts",
+        "long bibs": "Bib Tights",
+        "bidon": "Water Bottles",
+        "baselayer": "Base Layer",
+        # keep existing convention for tees
+        "t-shirt": "T-Shirts",
+        "t shirt": "T-Shirts",
+        "tee": "T-Shirts",
+        "tshirt": "T-Shirts",
+    }
+
+    # Prefer exact match; fallback to contains for common tee variants
+    if v in mapping:
+        return mapping[v]
+
+    # contains-based only for a couple of safe cases
     if "long bibs" in v:
         return "Bib Tights"
-    if "bibs" in v:
+    if v.startswith("bibs") or " bibs" in v:
         return "Bib Shorts"
-    if "bidon" in v:
-        return "Water Bottles"
-    if "baselayer" in v:
-        return "Base Layer"
+    if "t-shirt" in v or "t shirt" in v or " tee" in f" {v}" or "tshirt" in v:
+        return "T-Shirts"
 
     return val
 
@@ -1631,6 +1645,7 @@ def run_transform(
 
     # Custom Product Type: match using DESCRIPTION (to catch TEE / LONG SLEEVE etc.)
     sup["_product_type"] = sup["_desc_raw"].apply(lambda t: _best_match_product_type(t, product_types))
+    sup["_product_type"] = sup["_product_type"].apply(map_custom_product_type)
 
     # Tags (keep standardized color/gender tags)
     # -----------------------------------------------------
