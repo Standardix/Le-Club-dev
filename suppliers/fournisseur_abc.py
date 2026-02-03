@@ -745,6 +745,45 @@ def _read_list_column(wb, sheet_name: str) -> list[str]:
 
 
 
+def _read_product_type_gendered_map(wb, sheet_name: str = "Product Types") -> dict[str, bool]:
+    """Read Product Types sheet to know if a Custom Product Type is gendered.
+
+    Expected sheet structure (as in Help Data):
+      Col A: Custom Product Type
+      Col B: 'Genré' or 'NON Genré' (can be blank)
+
+    Rules:
+      - If Col B contains 'non' => NON Genré => False
+      - If Col B contains 'gen' => Genré => True
+      - If blank/unknown => default True (keep previous behavior)
+    """
+    if sheet_name not in wb.sheetnames:
+        return {}
+    ws = wb[sheet_name]
+    m: dict[str, bool] = {}
+    for r in range(2, ws.max_row + 1):
+        pt = ws.cell(row=r, column=1).value
+        flag = ws.cell(row=r, column=2).value
+        if pt is None:
+            continue
+        pt_s = str(pt).strip()
+        if not pt_s or pt_s.lower() == "nan":
+            continue
+        key = pt_s.strip().lower()
+
+        flag_s = "" if flag is None else str(flag).strip().lower()
+        # normalize accents (minimal)
+        flag_s = flag_s.replace("é", "e").replace("è", "e").replace("ê", "e").replace("à", "a").replace("ô", "o")
+        if "non" in flag_s:
+            m[key] = False
+        elif "gen" in flag_s:
+            m[key] = True
+        else:
+            m[key] = True
+    return m
+
+
+
 def _read_variant_weight_map(wb, sheet_name: str = "Variant Weight (Grams)") -> dict[str, str]:
     """
     Map Custom Product Type -> Variant Weight (Grams)
@@ -1321,6 +1360,7 @@ def run_transform(
     shopify_cat_rows = _read_category_rows(wb, "Shopify Product Category")
     google_cat_rows = _read_category_rows(wb, "Google Product Category")
     product_types = _read_list_column(wb, "Product Types")
+    product_type_gendered_map = _read_product_type_gendered_map(wb, "Product Types")
     variant_weight_map = _read_variant_weight_map(wb)
 
 
@@ -1668,6 +1708,27 @@ def run_transform(
     sup.loc[_pt_blob.str.contains(r"\bt[-\s]?shirt\b", regex=True), "_product_type"] = "T-Shirts"
     sup.loc[_pt_blob.str.contains(r"\btee\b", regex=True), "_product_type"] = "T-Shirts"
 
+
+    # -----------------------------------------------------
+    # Product type gendering (Help Data -> Product Types)
+    # -----------------------------------------------------
+    # Default behavior is considered "Genré" unless explicitly marked NON Genré.
+    sup["_is_gendered"] = sup["_product_type"].apply(
+        lambda pt: product_type_gendered_map.get(str(pt or "").strip().lower(), True) if str(pt or "").strip() else True
+    )
+
+    # Gender to export:
+    # 1) NON Genré -> blank
+    # 2) Genré -> keep existing rule (_gender_std)
+    # 3) Genré but empty -> default to "Men"
+    def _gender_final(r) -> str:
+        if not bool(r.get("_is_gendered", True)):
+            return ""
+        g = _norm(r.get("_gender_std", ""))
+        return g if g else "Men"
+
+    sup["_gender_final"] = sup.apply(_gender_final, axis=1)
+
     # Tags (keep standardized color/gender tags)
     # -----------------------------------------------------
     # Seasonality key (to apply Seasonality Tags per style)
@@ -1692,8 +1753,8 @@ def run_transform(
         else:
             tags.append("Seasonal")
 
-        if r["_gender_std"]:
-            tags.append(r["_gender_std"])
+        if r.get("_is_gendered", True) and r.get("_gender_final", ""):
+            tags.append(r["_gender_final"])
         tags.append("_badge_new")
         if r["_product_type"]:
             tags.append(r["_product_type"])
@@ -2092,7 +2153,7 @@ def run_transform(
     out["Metafield: my_fields.product_features [multi_line_text_field]"] = sup["_product_features"]
     out["Metafield: my_fields.behind_the_brand [multi_line_text_field]"] = sup["_behind_the_brand"]
     out["Metafield: my_fields.size_comment [single_line_text_field]"] = sup["_size_comment"]
-    out["Metafield: my_fields.gender [single_line_text_field]"] = sup["_gender_std"]
+    out["Metafield: my_fields.gender [single_line_text_field]"] = sup["_gender_final"]
 
     out["Metafield: my_fields.colour [single_line_text_field]"] = sup["_color_std"]
     out["Metafield: mm-google-shopping.color"] = sup["_color_std"]
@@ -2101,7 +2162,7 @@ def run_transform(
     out["Metafield: mm-google-shopping.size_system"] = "US"
     out["Metafield: mm-google-shopping.condition"] = "new"
     out["Metafield: mm-google-shopping.google_product_category"] = sup["_google_cat_id"]
-    out["Metafield: mm-google-shopping.gender"] = sup["_gender_std"]
+    out["Metafield: mm-google-shopping.gender"] = sup["_gender_final"]
 
     out["Variant Metafield: mm-google-shopping.mpn"] = sup["_variant_sku"]
     out["Variant Metafield: mm-google-shopping.gtin"] = sup["_barcode"]
@@ -2139,7 +2200,6 @@ def run_transform(
         "SEO Title",
         "SEO Description",
         "Metafield: my_fields.size_comment [single_line_text_field]",
-        "Metafield: my_fields.gender [single_line_text_field]",
         "Metafield: my_fields.colour [single_line_text_field]",
         "Metafield: mm-google-shopping.color",
         "Variant Metafield: mm-google-shopping.size",
