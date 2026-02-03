@@ -13,19 +13,27 @@ def remove_size(text):
 
 
 def _strip_size_tokens(s: str) -> str:
-    """Remove size tokens (XS/S/M/L/XL/XXL...) from a string used for SEO fields."""
+    """Remove size tokens (XS/S/M/L/XL/XXL...) from SEO fields without removing letters inside words."""
     if s is None:
         return s
     if not isinstance(s, str):
         s = str(s)
-    # Remove common size patterns: "- M", "/L", "(XL)", "size S", trailing tokens
-    s2 = re.sub(r"(?:\s*[-/]\s*|\s*\()?(?:size\s*)?(?:xxs|xs|s|m|l|xl|xxl|xxxl)\b\)?", "", s, flags=re.IGNORECASE)
-    # Clean leftover separators/spaces
-    s2 = re.sub(r"\s{2,}", " ", s2).strip()
-    s2 = re.sub(r"\s*-\s*$", "", s2).strip()
-    return s2
 
+    out = s
 
+    # Remove parenthesized sizes, e.g. "(M)" or "(size M)"
+    out = re.sub(r"(?i)\(\s*(?:size\s*)?(?:xxs|xs|s|m|l|xl|xxl|xxxl)\s*\)", "", out)
+
+    # Remove size tokens only when preceded by a separator or whitespace (so we don't touch words like "Studios")
+    out = re.sub(r"(?i)(?:\s*[-/]\s*|\s+)(?:size\s*)?(?:xxs|xs|s|m|l|xl|xxl|xxxl)\b", "", out)
+
+    # Cleanup leftover separators/spaces
+    out = re.sub(r"\s{2,}", " ", out).strip()
+    out = re.sub(r"\s+([,;:.])", r"\1", out)
+    out = re.sub(r"[-/]\s*$", "", out).strip()
+    out = re.sub(r"\s*-\s*$", "", out).strip()
+
+    return out
 def _scrub_nan_token_in_title(s: str) -> str:
     """Remove accidental 'nan' tokens that can appear when concatenating missing fields."""
     if s is None:
