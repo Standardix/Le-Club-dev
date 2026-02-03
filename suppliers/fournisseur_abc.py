@@ -2,6 +2,30 @@ from __future__ import annotations
 
 import re
 
+
+
+def map_custom_product_type(val: str) -> str:
+    if not val:
+        return val
+
+    v = val.strip().lower()
+
+    if "t-shirt" in v or "t shirt" in v:
+        return "T-Shirts"
+    if "gilet" in v:
+        return "Vests"
+    if "long bibs" in v:
+        return "Bib Tights"
+    if "bibs" in v:
+        return "Bib Shorts"
+    if "bidon" in v:
+        return "Water Bottles"
+    if "baselayer" in v:
+        return "Base Layer"
+
+    return val
+
+
 SIZE_REGEX = re.compile(r"""(\s*[-/]?\s*(?:size\s*)?(?:xs|s|m|l|xl|xxl)\b)""", re.IGNORECASE)
 
 def remove_size(text):
