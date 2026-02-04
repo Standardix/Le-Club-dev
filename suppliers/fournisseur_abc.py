@@ -63,7 +63,20 @@ def _looks_like_size(v: str) -> bool:
 def remove_size(text):
     if not isinstance(text, str):
         return text
-    return re.sub(SIZE_REGEX, "", text).strip()
+
+    t = text
+
+    # Protect possessive gender prefixes so the trailing "s" is not treated as a size token
+    t = re.sub("(?i)\\bmen['’]s\\b", "__MENS_POSSESSIVE__", t)
+    t = re.sub("(?i)\\bwomen['’]s\\b", "__WOMENS_POSSESSIVE__", t)
+
+    t = re.sub(SIZE_REGEX, "", t)
+
+    # Restore possessives
+    t = t.replace("__MENS_POSSESSIVE__", "Men's")
+    t = t.replace("__WOMENS_POSSESSIVE__", "Women's")
+
+    return t.strip()
 
 
 
@@ -475,7 +488,7 @@ def _remove_size_from_handle(handle: str) -> str:
     h = str(handle).strip().lower()
 
     # Tailles alpha à la fin
-    h = re.sub(r"-(xs|s|m|l|xl|xxl|xxxl)$", "", h)
+    h = re.sub(r"-(xs|s|m|l|xl|xxl|xxxl|os)$", "", h)
 
     # Tailles numériques à la fin (6, 6.5, 10-5, etc.)
     h = re.sub(r"-\d+([.-]\d+)?$", "", h)
@@ -1752,12 +1765,28 @@ def run_transform(
 
     # Max 200 chars (truncate)
     sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
-    # Handle: Vendor + Gender + Description + Color (color NON-standardized)
+    
+    # De-dupe gender words in Title (ex: "Women's Women's ...")
+    def _dedupe_gender_phrase(txt: str) -> str:
+        t = str(txt or "").strip()
+        if not t:
+            return ""
+        # collapse duplicates like "Women's Women's", "Women Women", etc.
+        t = re.sub(r"(?i)\b(women\'?s|women)\b\s+\b(women\'?s|women)\b", r"\1", t).strip()
+        t = re.sub(r"(?i)\b(men\'?s|men)\b\s+\b(men\'?s|men)\b", r"\1", t).strip()
+        t = re.sub(r"\s{2,}", " ", t).strip()
+        return t
+
+    sup["_title"] = sup["_title"].astype(str).map(_dedupe_gender_phrase)
+
+# Handle: Vendor + Gender + Description + Color (color NON-standardized)
     def _make_handle(r):
         # When description is long and moved to Body (HTML), build handle from Style Name/Name (same rule as Title)
         base_text = r.get("_title_name_raw") if r.get("_desc_is_long") and r.get("_title_name_raw") else r.get("_desc_handle")
         base_text = _strip_gender_tokens(base_text)
         desc_for_handle = _strip_reg_for_handle(base_text)
+        # remove leading gender words to avoid duplicates with gender prefix
+        desc_for_handle = re.sub(r"(?i)^(men|women)(\'s)?\s+", "", _norm(desc_for_handle)).strip()
 
         # Normalize gender for handle: mens / womens, blank for non-gendered
         def _gender_for_handle(g: str) -> str:
@@ -1773,7 +1802,7 @@ def run_transform(
                 return "mens"
             return ""
 
-        gender_handle = _gender_for_handle(r.get("_gender_std", ""))
+        gender_handle = _gender_for_handle(r.get("_gender_final", ""))
 
         color_for_handle = _strip_reg_for_handle(r.get("_color_in", ""))
 
@@ -1793,7 +1822,14 @@ def run_transform(
 
         # Remove apostrophes BEFORE slugify so women's -> womens (not women-s)
         raw = " ".join(parts).replace("’", "").replace("'", "")
-        return slugify(raw)
+        slug = slugify(raw)
+        # de-dupe consecutive parts (ex: womens-womens)
+        parts_slug = [p for p in str(slug).split("-") if p]
+        dedup=[]
+        for p in parts_slug:
+            if not dedup or dedup[-1]!=p:
+                dedup.append(p)
+        return "-".join(dedup)
     sup["_handle"] = sup.apply(_make_handle, axis=1).apply(_remove_size_from_handle)
 
     # Custom Product Type: match using multiple fields (description + title + optional source product type)
@@ -1826,6 +1862,7 @@ def run_transform(
     sup.loc[_pt_blob.str.contains(r"\bgilet\b", regex=True), "_product_type"] = _canon_product_type("Vests")
     sup.loc[_pt_blob.str.contains(r"\bbidon\b", regex=True), "_product_type"] = _canon_product_type("Water Bottles")
     sup.loc[_pt_blob.str.contains(r"\bbaselayer\b", regex=True), "_product_type"] = _canon_product_type("Base Layer")
+    sup.loc[_pt_blob.str.contains(r"\bsweatshirt\b", regex=True), "_product_type"] = _canon_product_type("Casual Sweatshirt")
     sup.loc[_pt_blob.str.contains(r"\bt[-\s]?shirt\b", regex=True), "_product_type"] = _canon_product_type("T-Shirts")
     sup.loc[_pt_blob.str.contains(r"\btee\b", regex=True), "_product_type"] = _canon_product_type("T-Shirts")
     # Final enforcement: always output canonical Product Types from Help Data
@@ -1854,6 +1891,33 @@ def run_transform(
         return g if g else "Men"
 
     sup["_gender_final"] = sup.apply(_gender_final, axis=1)
+
+    # -----------------------------------------------------
+    # v22 fix: after _gender_final is known (based on Product Type gendering),
+    # rebuild Title / Handle / SEO so Men's/Women's appears correctly and handle uses mens/womens.
+    # -----------------------------------------------------
+
+    # Update gender title prefix from _gender_final
+    sup["_gender_title"] = _series_str_clean(sup["_gender_final"]).map(_gender_for_title)
+
+    # Rebuild Title with corrected gender prefix (and keep all existing rules)
+    base_title = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
+
+    sup["_title"] = [
+        _append_color_if_needed(bt, ct)
+        for bt, ct in zip(base_title.tolist(), sup["_color_title"].astype(str).tolist())
+    ]
+    sup["_title"] = sup["_title"].astype(str).map(remove_size)
+    sup["_title"] = sup["_title"].astype(str).map(_dedupe_gender_phrase)
+    sup["_title"] = sup["_title"].astype(str).str.replace(r"\s{2,}", " ", regex=True).str.strip()
+    sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
+
+    # Rebuild Handle so it uses _gender_final (mens/womens) and de-dupes parts
+    sup["_handle"] = sup.apply(_make_handle, axis=1).apply(_remove_size_from_handle)
+
+    # Siblings follow handle
+    sup["_siblings"] = sup["_handle"]
+
 
     # Tags (keep standardized color/gender tags)
     # -----------------------------------------------------
@@ -2094,13 +2158,8 @@ def run_transform(
     def _seo_base(r) -> str:
         vendor = _title_case_preserve_registered(_norm(r.get("_vendor", "")))
 
-        g = _norm(r.get("_gender_std", ""))
-        # SEO Title: same gender rule as Title (ONLY Women's; never Men/Unisex)
-        gl = g.lower().replace("’", "'") if g else ""
-        if gl in ("women", "womens", "women's", "female", "femme", "femmes"):
-            g = "Women's"
-        else:
-            g = ""
+        # Gender prefix: Men's / Women's (blank if NON genré)
+        g = _gender_for_title(_norm(r.get("_gender_final", "")))
         g = _title_case_preserve_registered(g)
 
         # Description part: swap to Style Name/Name when source description is long
