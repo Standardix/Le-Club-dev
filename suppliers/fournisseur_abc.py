@@ -849,6 +849,70 @@ def _read_product_type_gendered_map(wb, sheet_name: str = "Product Types") -> di
 
 
 
+
+def _read_product_type_unisex_map(wb, sheet_name: str = "Product Types") -> dict[str, bool]:
+    """Read Product Types sheet to know if a gendered product type *may* be unisex.
+
+    Expected Help Data sheet structure:
+      Col A: Custom Product Type
+      Col C: 'Peut-être unisexe?' (Oui/Non, Yes/No, True/False, 1/0)
+
+    Returns dict[normalized_product_type -> can_be_unisex_bool].
+    Unknown product types default to False.
+    """
+    if sheet_name not in wb.sheetnames:
+        return {}
+    ws = wb[sheet_name]
+
+    def _norm_pt(x: str) -> str:
+        s = str(x or "").strip().lower()
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    def _to_bool(v) -> bool:
+        if v is None:
+            return False
+        s = str(v).strip().lower()
+        s = s.replace("é", "e").replace("è", "e").replace("ê", "e").replace("à", "a").replace("ô", "o")
+        return s in {"oui", "yes", "true", "1", "y", "vrai"}
+
+    def _singularize(s: str) -> str:
+        t = _norm_pt(s)
+        if t.endswith("s") and len(t) >= 4 and not t.endswith("ss"):
+            return t[:-1]
+        return t
+
+    def _pluralize(s: str) -> str:
+        t = _norm_pt(s)
+        if not t:
+            return t
+        if t.endswith("s"):
+            return t
+        return t + "s"
+
+    m: dict[str, bool] = {}
+    for r in range(2, ws.max_row + 1):
+        pt = ws.cell(row=r, column=1).value
+        flag = ws.cell(row=r, column=3).value  # Col C
+        if pt is None:
+            continue
+        pt_s = str(pt).strip()
+        if not pt_s or pt_s.lower() == "nan":
+            continue
+
+        can_be_unisex = _to_bool(flag)
+
+        base = _norm_pt(pt_s)
+        if not base:
+            continue
+
+        keys = {base, _singularize(base), _pluralize(base), _pluralize(_singularize(base))}
+        for k in keys:
+            if k:
+                m[k] = can_be_unisex
+
+    return m
+
 def _read_variant_weight_map(wb, sheet_name: str = "Variant Weight (Grams)") -> dict[str, str]:
     """
     Map Custom Product Type -> Variant Weight (Grams)
@@ -1529,6 +1593,10 @@ def run_transform(
         # Look across name/description-like text + sku for gender signals
         t = f"{_norm(name_val)} {_norm(sku_val)}".lower()
 
+        # Unisex marker
+        if re.search(r"\bunisex\b|\buni[-\s]?sex\b", t):
+            return "Unisex"
+
         # Strong markers in SKUs like -w- / -m-
         if re.search(r"-\s*w\s*-", t):
             return "Women"
@@ -1942,17 +2010,32 @@ def run_transform(
         lambda pt: product_type_gendered_map.get(str(pt or "").strip().lower(), True) if str(pt or "").strip() else False
     )
 
-    # Gender to export:
-    # 1) NON Genré -> blank
-    # 2) Genré -> keep existing rule (_gender_std)
-    # 3) Genré but empty -> default to "Men"
+    # Unisex eligibility (Help Data: Product Types -> "Peut-être unisexe?")
+    sup["_can_be_unisex"] = sup["_product_type"].apply(
+        lambda pt: product_type_unisex_map.get(str(pt or "").strip().lower(), False) if str(pt or "").strip() else False
+    )
+
+    # Gender to export (v22):
+    # a) NON Genré -> blank
+    # b) Genré -> use existing rules/columns (_gender_std)
+    # c) Genré and gender not found AND can_be_unisex = NON -> write "Men"
+    # d) Genré and gender not found AND can_be_unisex = OUI -> leave blank and flag for review (red)
     def _gender_final(r) -> str:
         if not bool(r.get("_is_gendered", True)):
             return ""
         g = _norm(r.get("_gender_std", ""))
-        return g if g else "Men"
+        if g:
+            return g
+        # Not found
+        if bool(r.get("_can_be_unisex", False)):
+            return ""
+        return "Men"
 
     sup["_gender_final"] = sup.apply(_gender_final, axis=1)
+    sup["_gender_review"] = sup.apply(
+        lambda r: bool(r.get("_is_gendered", True)) and (not _norm(r.get("_gender_std", ""))) and bool(r.get("_can_be_unisex", False)),
+        axis=1,
+    )
 
     # -----------------------------------------------------
     # v22 fix: after _gender_final is known (based on Product Type gendering),
@@ -2430,8 +2513,9 @@ def run_transform(
     out = out.replace({r"(?i)^\s*nan\s*-\s*": "", r"(?i)\bnan\b": ""}, regex=True)
     out = out.replace({r"\s{2,}": " "}, regex=True)  # éviter "nan" dans l'export
 
-    # Internal flag for styling (not exported)
+    # Internal flags for styling (not exported)
     out["OUT_COLOR_HIT"] = sup.get("_color_map_hit", True)
+    out["OUT_GENDER_REVIEW"] = sup.get("_gender_review", False)
 
 
     # Yellow rules
@@ -2607,7 +2691,23 @@ def run_transform(
     buffer = _apply_red_font_for_rows_cols(buffer, "products", _rows_title_warn(products_df), title_warn_cols)
     buffer = _apply_red_font_for_rows_cols(buffer, "do not import", _rows_title_warn(do_not_import_df), title_warn_cols)
 
-    # Red font for colour metafields when supplier colour was NOT found in Help Data mapping
+    
+    # Red font for gender metafields when Product Type *may* be unisex but no clear Men/Unisex was found
+    gender_review_cols = [
+        "Metafield: my_fields.gender [single_line_text_field]",
+        "Metafield: mm-google-shopping.gender",
+    ]
+
+    def _rows_gender_review(df_slice: pd.DataFrame) -> list[int]:
+        if "OUT_GENDER_REVIEW" not in df_slice.columns:
+            return []
+        mask = df_slice["OUT_GENDER_REVIEW"].astype(bool)
+        return [i for i, v in enumerate(mask.tolist()) if v]
+
+    buffer = _apply_red_font_for_rows_cols(buffer, "products", _rows_gender_review(products_df), gender_review_cols)
+    buffer = _apply_red_font_for_rows_cols(buffer, "do not import", _rows_gender_review(do_not_import_df), gender_review_cols)
+
+# Red font for colour metafields when supplier colour was NOT found in Help Data mapping
     color_unmapped_cols = [
         "Metafield: my_fields.colour [single_line_text_field]",
         "Metafield: mm-google-shopping.color",
