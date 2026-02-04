@@ -425,15 +425,6 @@ if supplier_file is not None:
 # 🔹 Projet pilote : pas de sélection de marque
 brand_choice = ""
 
-
-# --- Persist outputs/warnings across reruns (download buttons trigger rerun) ---
-if "last_output_bytes" not in st.session_state:
-    st.session_state["last_output_bytes"] = None
-if "last_warnings_df" not in st.session_state:
-    st.session_state["last_warnings_df"] = None
-if "last_supplier_name" not in st.session_state:
-    st.session_state["last_supplier_name"] = None
-
 generate = st.button(
     "Générer le fichier Shopify",
     type="secondary",
@@ -468,7 +459,7 @@ if generate:
                 existing_shopify_xlsx_bytes=(existing_shopify_file.getvalue() if existing_shopify_file is not None else None),
                 vendor_name=supplier_name,
                 brand_choice=brand_choice,  # toujours vide pour le pilote
-                event_promo_tag=event_promo_tag,
+                            event_promo_tag=event_promo_tag,
                 style_season_map=style_season_map,
             )
 
@@ -479,28 +470,17 @@ if generate:
         progress.progress(100)
         status.success("Fichier généré avec succès ✅")
 
-        # Persist
-        st.session_state["last_output_bytes"] = output_bytes
-        st.session_state["last_warnings_df"] = warnings_df
-        st.session_state["last_supplier_name"] = supplier_name
+        if warnings_df is not None and not warnings_df.empty:
+            with st.expander("⚠️ Warnings détectés"):
+                st.dataframe(warnings_df, use_container_width=True)
+
+        st.download_button(
+            label="⬇️ Télécharger output.xlsx",
+            data=output_bytes,
+            file_name=f"output_{supplier_name.replace(' ', '_')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
     except Exception as e:
         progress.empty()
         status.error(f"Erreur lors de la génération : {e}")
-
-# --- Always show last warnings + download (even after rerun) ---
-_output_bytes = st.session_state.get("last_output_bytes")
-_warnings_df = st.session_state.get("last_warnings_df")
-_last_supplier = st.session_state.get("last_supplier_name") or supplier_name
-
-if _warnings_df is not None and isinstance(_warnings_df, pd.DataFrame) and not _warnings_df.empty:
-    with st.expander("Warnings détectés", expanded=False):
-        st.dataframe(_warnings_df, use_container_width=True)
-
-if _output_bytes:
-    st.download_button(
-        label="Télécharger output.xlsx",
-        data=_output_bytes,
-        file_name=f"output_{str(_last_supplier).replace(' ', '_')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
