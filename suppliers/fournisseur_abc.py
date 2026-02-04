@@ -218,6 +218,14 @@ except Exception:
         s = re.sub(r"-{2,}", "-", s).strip("-")
         return s
 
+
+
+def _slugify_handle(value: str) -> str:
+    """Slugify for handles but REMOVE apostrophes (women's -> womens)."""
+    s = str(value or "").replace("’", "'")
+    # remove apostrophes entirely
+    s = s.replace("'", "")
+    return slugify(s)
 def _build_existing_shopify_index(existing_shopify_xlsx_bytes: bytes | None):
     """Build matching indexes from an existing Shopify product export/list.
 
@@ -456,8 +464,8 @@ def _remove_size_from_handle(handle: str) -> str:
 
     h = str(handle).strip().lower()
 
-    # Tailles alpha à la fin
-    h = re.sub(r"-(xs|s|m|l|xl|xxl|xxxl)$", "", h)
+    # Tailles alpha à la fin (incl. OS/One Size)
+    h = re.sub(r"-(xxs|xs|s|m|l|xl|xxl|xxxl|os|onesize|one-size)$", "", h)
 
     # Tailles numériques à la fin (6, 6.5, 10-5, etc.)
     h = re.sub(r"-\d+([.-]\d+)?$", "", h)
@@ -1448,6 +1456,19 @@ def run_transform(
 
     product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
     color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code", "colour code and name", "Colour Code and Name", "Color Code and Name"])
+    # v20 Color source (row-level): try multiple possible columns (PAS files can have STYLE COLOR NAME etc.)
+    _color_cols_ordered = []
+    for cand in [
+        "Vendor Color","vendor color","Color","color","Colour","colour",
+        "STYLE COLOR NAME","Style Color Name","Style Colour Name","Style color name","style color name",
+        "Color Name","Colour Name","Colour name","color name",
+        "Color Code and Name","Colour Code and Name","colour code and name","colour code and name ",
+        "Color Code","color code","Colour Code","colour code",
+    ]:
+        c = _first_existing_col(sup, [cand])
+        if c and c not in _color_cols_ordered:
+            _color_cols_ordered.append(c)
+
     size_col = _first_existing_col(sup, ["Size 1","Size1","Size", "size", "Vendor Size1", "vendor size1"])
     upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
     ean_col = _first_existing_col(sup, ["EAN", "EAN Code", "ean", "ean code"])
@@ -1551,7 +1572,19 @@ def run_transform(
     # Clean HTML-ish artifacts in Body (HTML)
     sup["_body_html"] = sup["_body_html"].map(_sanitize_text_like_html)
     # Color / Size input
-    sup["_color_raw"] = _series_str_clean(sup[color_col]).map(_norm) if color_col else ""
+    # v20: build color from first non-empty among candidate columns
+    sup["_color_raw"] = ""
+    if "_color_cols_ordered" in locals() and _color_cols_ordered:
+        for j, cc in enumerate(_color_cols_ordered):
+            scc = _series_str_clean(sup[cc]).map(_norm)
+            if j == 0:
+                sup["_color_raw"] = scc
+            else:
+                sup["_color_raw"] = sup["_color_raw"].where(sup["_color_raw"].astype(str).str.strip().ne(""), scc)
+    elif color_col:
+        sup["_color_raw"] = _series_str_clean(sup[color_col]).map(_norm)
+    else:
+        sup["_color_raw"] = ""
     sup["_size_raw"] = _series_str_clean(sup[size_col]).map(_norm) if size_col else ""
 
     # Fallback parse from description if missing
@@ -1569,6 +1602,12 @@ def run_transform(
     # PAS Normal Studios – OS / One Size is a size, never a color (applied after fallbacks)
     if vendor_key in ("pasnormalstudios", "pasnormalstudio"):
         sup.loc[sup["_color_in"].astype(str).str.strip().str.upper().isin(["OS", "ONE SIZE"]), "_color_in"] = ""
+
+    # v20: if the chosen "color" value is actually a SIZE token (ex: M/L/XL/42), treat as missing and fallback again
+    _c = sup["_color_in"].astype(str).str.strip()
+    _is_size_token = _c.str.match(r"(?i)^(?:xxs|xs|s|m|l|xl|xxl|xxxl|\d{1,2}(?:[./-]\d{1,2})?)$")
+    sup.loc[_is_size_token, "_color_in"] = ""
+    sup.loc[sup["_color_in"].eq(""), "_color_in"] = sup["_color_fb"]
 
 
     sup["_size_in"] = sup["_size_raw"]
@@ -1716,6 +1755,7 @@ def run_transform(
 
     # Max 200 chars (truncate)
     sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
+    sup["_title"] = sup["_title"].apply(_strip_size_tokens)
     # Handle: Vendor + Gender + Description + Color (color NON-standardized)
     def _make_handle(r):
         # When description is long and moved to Body (HTML), build handle from Style Name/Name (same rule as Title)
@@ -1733,7 +1773,7 @@ def run_transform(
             color_for_handle,
         ]
         parts = [p for p in parts if p and str(p).strip()]
-        return slugify(" ".join(parts))
+        return _slugify_handle(" ".join(parts))
     sup["_handle"] = sup.apply(_make_handle, axis=1).apply(_remove_size_from_handle)
 
     # Custom Product Type: match using multiple fields (description + title + optional source product type)
@@ -1794,6 +1834,29 @@ def run_transform(
         return g if g else "Men"
 
     sup["_gender_final"] = sup.apply(_gender_final, axis=1)
+
+    # v20: recompute Handle using final gendering (NON Genré => no gender in handle)
+    def _make_handle_v20(r):
+        base_text = r.get("_title_name_raw") if r.get("_desc_is_long") and r.get("_title_name_raw") else r.get("_desc_handle")
+        base_text = _strip_gender_tokens(base_text)
+        desc_for_handle = _strip_reg_for_handle(base_text)
+        color_for_handle = _strip_reg_for_handle(r.get("_color_in", ""))
+
+        # Avoid duplicating color if it's already present in the base text
+        if color_for_handle and _norm(color_for_handle).lower() in _norm(desc_for_handle).lower():
+            color_for_handle = ""
+
+        parts = [
+            _strip_reg_for_handle(r.get("_vendor")),
+            _strip_reg_for_handle(r.get("_gender_final")),  # blank when NON Genré
+            desc_for_handle,
+            color_for_handle,
+        ]
+        parts = [p for p in parts if p and str(p).strip()]
+        return _slugify_handle(" ".join(parts))
+
+    sup["_handle"] = sup.apply(_make_handle_v20, axis=1).apply(_remove_size_from_handle)
+    sup["_siblings"] = sup["_handle"]
 
     # Tags (keep standardized color/gender tags)
     # -----------------------------------------------------
