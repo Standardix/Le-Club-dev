@@ -431,12 +431,12 @@ SHOPIFY_OUTPUT_COLUMNS = [
 # NORMALISATION DES TITRES DE COLONNES (Shopify strict)
 # ---------------------------------------------------------
 SHOPIFY_HEADER_RENAMES = {
-    "Metafield: my_fields.product_use_case [multi_line_text_field]": "Metafield: product_use_case",
-    "Metafield: my_fields.product_features [multi_line_text_field]": "Metafield: product_features",
+    "Metafield: product_use_case": "Metafield: product_use_case",
+    "Metafield: product_features": "Metafield: product_features",
     "Metafield: size_comment": "Metafield: size_comment",
     "Metafield: gender": "Metafield: gender",
     "Metafield: colour": "Metafield: colour",
-    "Metafield: theme.siblings [single_line_text_field]": "Metafield: theme.siblings",
+    "Metafield: theme.siblings": "Metafield: theme.siblings",
 }
 
 
@@ -2522,14 +2522,14 @@ def run_transform(
 
     # Final safety: ensure no <br> or &nbsp; artifacts in text fields
     out["Body (HTML)"] = out["Body (HTML)"].map(_sanitize_text_like_html)
-    out["Metafield: my_fields.product_features [multi_line_text_field]"] = out["Metafield: my_fields.product_features [multi_line_text_field]"].map(_sanitize_text_like_html)
 
     out["Variant Weight Unit"] = "g"
     out["Cost per item"] = sup["_cost"]
     out["Status"] = "draft"
 
-    out["Metafield: my_fields.product_use_case [multi_line_text_field]"] = ""
-    out["Metafield: my_fields.product_features [multi_line_text_field]"] = sup["_product_features"]
+    out["Metafield: product_use_case"] = ""
+    out["Metafield: product_features"] = sup["_product_features"]
+    out["Metafield: product_features"] = out["Metafield: product_features"].map(_sanitize_text_like_html)
     out["Metafield: behind_the_brand"] = sup["_behind_the_brand"]
     out["Metafield: size_comment"] = sup["_size_comment"]
     out["Metafield: gender"] = sup["_gender_final"]
@@ -2546,7 +2546,7 @@ def run_transform(
     out["Variant Metafield: mm-google-shopping.mpn"] = sup["_variant_sku"]
     out["Variant Metafield: mm-google-shopping.gtin"] = sup["_barcode"]
 
-    out["Metafield: theme.siblings [single_line_text_field]"] = sup["_siblings"]
+    out["Metafield: theme.siblings"] = sup["_siblings"]
     out["Category: ID"] = sup["_shopify_cat_id"]
 
     out["Inventory Available: Boutique"] = 0
