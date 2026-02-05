@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# ===== v22 GLOBAL INIT (FIX DEFINITIVE) =====
+product_type_unisex_map = {}
+# ==========================================
+
+
 import re
 
 
@@ -2730,3 +2735,6 @@ def run_transform(
 
 
     return buffer.getvalue(), pd.DataFrame(warnings)
+
+# v22 bind map once help data path is known
+product_type_unisex_map = _read_product_type_unisex_map(HELP_DATA_PATH)
