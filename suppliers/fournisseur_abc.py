@@ -1289,6 +1289,10 @@ def run_transform(
     existing_shopify_xlsx_bytes: bytes | None = None,
     supplier_filename: str = "",
 ):
+    # v22: map Product Type -> Peut-être unisexe?
+    global product_type_unisex_map
+    product_type_unisex_map = _read_product_type_unisex_map(help_xlsx_bytes)
+
     # Defensive defaults (avoid NameError when price columns absent)
     detected_cost_col = None
     detected_price_col = None
@@ -2737,4 +2741,4 @@ def run_transform(
     return buffer.getvalue(), pd.DataFrame(warnings)
 
 # v22 bind map once help data path is known
-product_type_unisex_map = _read_product_type_unisex_map(HELP_DATA_PATH)
+    # v22: product_type_unisex_map initialized inside run_transform (help_xlsx_bytes)
