@@ -1958,7 +1958,7 @@ def run_transform(
         parts = [p for p in parts if p and str(p).strip()]
 
         # Remove apostrophes BEFORE slugify so women's -> womens (not women-s)
-        raw = " ".join(parts).replace("’", "").replace("'", "")
+        raw = " ".join(parts).replace("’", "").replace("'", "").replace(".", "")
         slug = slugify(raw)
         # de-dupe consecutive parts (ex: womens-womens)
         parts_slug = [p for p in str(slug).split("-") if p]
