@@ -361,6 +361,7 @@ def _sanitize_nan(df):
     return df.where(df.notna(), "")
 
 YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+RED_FILL = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
 
 def _norm(x) -> str:
     """Normalize input to clean string; treat NaN/None/'nan'/'none' as empty."""
@@ -1247,6 +1248,31 @@ def _apply_red_font_for_rows_cols(buffer: io.BytesIO, sheet_name: str, rows_0bas
     outb.seek(0)
     return outb
 
+
+
+def _apply_red_fill_for_rows_cols(buffer: io.BytesIO, sheet_name: str, rows_0based: list[int], col_names: list[str]) -> io.BytesIO:
+    """Apply RED background fill to specific columns for the given 0-based dataframe row indexes."""
+    buffer.seek(0)
+    wb = load_workbook(buffer)
+    if sheet_name not in wb.sheetnames:
+        return buffer
+    ws = wb[sheet_name]
+
+    headers = [str(c.value or "") for c in ws[1]]
+    col_index = {h: i + 1 for i, h in enumerate(headers) if h}
+
+    for df_i in rows_0based:
+        excel_row = df_i + 2
+        for cn in col_names:
+            if cn not in col_index:
+                continue
+            cell = ws.cell(row=excel_row, column=col_index[cn])
+            cell.fill = RED_FILL
+
+    outb = io.BytesIO()
+    wb.save(outb)
+    outb.seek(0)
+    return outb
 
 def _apply_header_notes(buffer: io.BytesIO, sheet_name: str, notes: dict[str, str]) -> io.BytesIO:
     """
@@ -2739,8 +2765,8 @@ def run_transform(
         mask = df_slice["OUT_GENDER_REVIEW"].astype(bool)
         return [i for i, v in enumerate(mask.tolist()) if v]
 
-    buffer = _apply_red_font_for_rows_cols(buffer, "products", _rows_gender_review(products_df), gender_review_cols)
-    buffer = _apply_red_font_for_rows_cols(buffer, "do not import", _rows_gender_review(do_not_import_df), gender_review_cols)
+    buffer = _apply_red_fill_for_rows_cols(buffer, "products", _rows_gender_review(products_df), gender_review_cols)
+    buffer = _apply_red_fill_for_rows_cols(buffer, "do not import", _rows_gender_review(do_not_import_df), gender_review_cols)
 
 # Header notes (Excel comments) to explain red formatting / validations
     header_notes = {
