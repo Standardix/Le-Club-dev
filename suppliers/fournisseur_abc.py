@@ -1363,6 +1363,7 @@ def run_transform(
             "description", "Description", "Product Name", "product name",
             "Name", "name",
             "Title", "title", "Style", "style", "Style Name", "style name",
+            "style_name", "STYLE_NAME",
             "Display Name", "display name", "Online Display Name", "online display name",
             "Technical Specifications", "technical specifications",
         ]
@@ -1413,6 +1414,14 @@ def run_transform(
                 continue
 
             # Validate minimum required columns
+
+            # v22.2 Satisfy: accept old/new column naming and ensure a canonical "Description" column exists
+            if vendor_key in ("satisfy",):
+                if "Description" not in df.columns:
+                    _desc_src = _first_existing_col(df, ["Description", "description", "style_name", "STYLE_NAME", "Style Name", "style name"])
+                    if _desc_src is not None:
+                        df["Description"] = df[_desc_src]
+
             has_desc = _first_existing_col(df, desc_candidates) is not None
             has_msrp = _first_existing_col(df, msrp_candidates) is not None
             if not has_desc:
@@ -1559,6 +1568,7 @@ def run_transform(
             "Technical Specifications", "technical specifications",
             "Product Name", "product name",
             "Title", "title", "Style", "style", "Style Name", "style name",
+            "style_name", "STYLE_NAME",
             "Name", "name",
             "Display Name", "display name", "Online Display Name", "online display name",
         ],
@@ -2090,7 +2100,8 @@ def run_transform(
     # Seasonality key (to apply Seasonality Tags per style)
     # -----------------------------------------------------
     style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
-    style_name_col = _first_existing_col(sup, ["Style Name", "style name", "Product Name", "Name"])
+    style_name_col = _first_existing_col(sup, ["Style Name", "style name",
+            "style_name", "STYLE_NAME", "Product Name", "Name"])
     sup["_seasonality_key"] = ""
     if style_num_col is not None:
         sup["_seasonality_key"] = _series_str_clean(sup[style_num_col]).map(_clean_style_key)
@@ -2405,7 +2416,8 @@ def run_transform(
 
     # Rule 3: If a style has only ONE row in the supplier file -> Title / Default Title
     style_num_col_v12 = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "style number", "style #", "Style NO", "Style No", "STYLE NO", "style no"])
-    style_name_col_v12 = _first_existing_col(sup, ["Style Name", "style name", "STYLE NAME", "Product Name", "Name"])
+    style_name_col_v12 = _first_existing_col(sup, ["Style Name", "style name",
+            "style_name", "STYLE_NAME", "STYLE NAME", "Product Name", "Name"])
     sup["_style_key_v12"] = ""
     if style_num_col_v12 is not None:
         sup["_style_key_v12"] = _series_str_clean(sup[style_num_col_v12]).map(_clean_style_key)
