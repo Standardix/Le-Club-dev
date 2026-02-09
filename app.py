@@ -60,6 +60,18 @@ st.markdown(
 
 st.title("Générateur de fichier Shopify")
 
+
+
+import os
+
+with st.expander("📘 Documentation – Mode d’emploi"):
+    if os.path.exists("README.md"):
+        with open("README.md", "r", encoding="utf-8") as f:
+            st.markdown(f.read())
+    else:
+        st.info("Le fichier README.md n’a pas été trouvé dans le projet.")
+
+
 SUPPLIERS = {
     "Balmoral": run_abc,
     "Bandit": run_abc,
