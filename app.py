@@ -5,6 +5,7 @@ import time
 import hashlib
 import pandas as pd
 import re
+import os
 
 
 def _read_csv_bytes(file_bytes: bytes) -> pd.DataFrame:
@@ -60,16 +61,35 @@ st.markdown(
 
 st.title("Générateur de fichier Shopify")
 
+# --- Documentation (téléchargements) ---
+st.markdown("### 📘 Documentation")
+col_doc1, col_doc2 = st.columns(2)
 
-
-import os
-
-with st.expander("📘 Documentation – Mode d’emploi"):
-    if os.path.exists("README.md"):
-        with open("README.md", "r", encoding="utf-8") as f:
-            st.markdown(f.read())
+with col_doc1:
+    doc_path = os.path.join("docs", "ReadMe.pdf")
+    if os.path.exists(doc_path):
+        with open(doc_path, "rb") as f:
+            st.download_button(
+                label="📄 Télécharger la documentation",
+                data=f,
+                file_name="Documentation_client.pdf",
+                mime="application/pdf",
+            )
     else:
-        st.info("Le fichier README.md n’a pas été trouvé dans le projet.")
+        st.warning("Fichier manquant : docs/ReadMe.pdf")
+
+with col_doc2:
+    rules_path = os.path.join("docs", "Règles en place.pdf")
+    if os.path.exists(rules_path):
+        with open(rules_path, "rb") as f:
+            st.download_button(
+                label="📄 Télécharger les règles des colonnes",
+                data=f,
+                file_name="Regles_des_colonnes.pdf",
+                mime="application/pdf",
+            )
+    else:
+        st.warning("Fichier manquant : docs/Règles en place.pdf")
 
 
 SUPPLIERS = {
