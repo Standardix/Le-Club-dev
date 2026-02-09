@@ -74,7 +74,7 @@ with st.expander("📘 Documentation"):
                 st.download_button(
                     label="📄 Télécharger le guide d'utilisation",
                     data=f,
-                    file_name="Geuide_d'utilisation.pdf",
+                    file_name="Guide_d'utilisation.pdf",
                     mime="application/pdf",
                 )
         else:
