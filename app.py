@@ -72,9 +72,9 @@ with st.expander("📘 Documentation"):
         if os.path.exists("docs/ReadMe.pdf"):
             with open("docs/ReadMe.pdf", "rb") as f:
                 st.download_button(
-                    label="📄 Télécharger la documentation",
+                    label="📄 Télécharger le guide d'utilisation",
                     data=f,
-                    file_name="Documentation_client.pdf",
+                    file_name="Geuide_d'utilisation.pdf",
                     mime="application/pdf",
                 )
         else:
