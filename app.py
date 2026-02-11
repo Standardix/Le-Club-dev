@@ -243,6 +243,10 @@ def _extract_unique_style_rows(file_bytes: bytes, supplier_name: str = "", file_
             cols.append("Style Number")
         return out[cols].reset_index(drop=True)
 
+seasonality_ui_shown = False
+generate_clicked = False
+style_season_map = {}
+
     bio = io.BytesIO(file_bytes)
     xls = pd.ExcelFile(bio)
 
@@ -389,6 +393,7 @@ if supplier_file is not None:
     style_rows_df = _extract_unique_style_rows(supplier_file.getvalue(), supplier_name, supplier_file.name)
     if style_rows_df is not None and not style_rows_df.empty:
         st.markdown("#### Seasonality")
+        seasonality_ui_shown = True
 
         key_col = "Style Number" if "Style Number" in style_rows_df.columns else "Style Name"
         # Stabilize ordering so the fingerprint doesn't change between reruns
@@ -499,8 +504,8 @@ if supplier_file is not None:
 # 🔹 Projet pilote : pas de sélection de marque
 brand_choice = ""
 
-# If Seasonality form is not shown (no style columns), we still need a generate button
-if not generate_clicked:
+# If no Seasonality table was shown, we still need the single Generate button
+if not seasonality_ui_shown:
     generate_clicked = st.button(
         "Générer le fichier Shopify",
         type="secondary",
