@@ -435,6 +435,38 @@ if supplier_file is not None:
             st.session_state["seasonality_df"] = tmp
 
         edited_df = None
+
+        # Collage rapide : remplir plusieurs styles avec le même tag (sans casser le data_editor)
+        with st.expander("Collage rapide (Seasonality)", expanded=False):
+            c1, c2 = st.columns([2, 3])
+            fill_value = c1.text_input(
+                "Remplir avec",
+                value="",
+                placeholder="ex: ss2025, spring-summer, fall-winter…",
+                key="seasonality_fill_value",
+            )
+            style_options = st.session_state["seasonality_df"][key_col].astype(str).tolist()
+            styles_to_fill = c2.multiselect(
+                "Styles à remplir",
+                options=style_options,
+                default=[],
+                key="seasonality_styles_to_fill",
+            )
+            apply_fill = st.button("Appliquer aux styles sélectionnés", key="seasonality_apply_fill")
+            if apply_fill:
+                if not fill_value.strip():
+                    st.warning("Veuillez saisir une valeur dans \"Remplir avec\".")
+                elif not styles_to_fill:
+                    st.warning("Veuillez sélectionner au moins un style.")
+                else:
+                    df_tmp = st.session_state["seasonality_df"].copy()
+                    df_tmp.loc[df_tmp[key_col].astype(str).isin([str(s) for s in styles_to_fill]), "Seasonality Tags"] = fill_value.strip()
+                    st.session_state["seasonality_df"] = df_tmp
+                    # Force le data_editor à se rafraîchir avec les nouvelles valeurs
+                    if widget_key in st.session_state:
+                        del st.session_state[widget_key]
+                    st.rerun()
+
         with st.form("seasonality_form", clear_on_submit=False):
             edited_df = st.data_editor(
                 st.session_state["seasonality_df"],
