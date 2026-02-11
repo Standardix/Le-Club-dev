@@ -30,6 +30,15 @@ def _read_csv_bytes(file_bytes: bytes) -> pd.DataFrame:
 from suppliers.fournisseur_abc import run_transform as run_abc
 
 st.set_page_config(page_title="Générateur Shopify – Fichiers fournisseurs", layout="wide")
+st.markdown(
+    """<style>
+    /* Make forms visually invisible (no border/box/padding) */
+    div[data-testid="stForm"] { border: none !important; padding: 0 !important; background: transparent !important; }
+    div[data-testid="stForm"] > div { padding: 0 !important; }
+    </style>""",
+    unsafe_allow_html=True,
+)
+
 
 # --- CSS bouton (normal + hover) ---
 st.markdown(
@@ -139,6 +148,8 @@ event_promo_tag = st.selectbox(
 )
 
 style_season_map: dict[str, str] = {}
+
+generate_clicked = False
 
 def _clean_style_key(v) -> str:
     s = " ".join(str(v or "").strip().split())
@@ -443,23 +454,33 @@ if supplier_file is not None:
 
         # Seasonality editor (no per-keystroke rerun): we keep the editor state,
         # and we "commit" it when the user clicks **Générer le fichier Shopify** (single action).
-        edited_df = st.data_editor(
-            st.session_state["seasonality_df"],
-            key="seasonality_editor",
-            use_container_width=True,
-            hide_index=True,
-            num_rows="fixed",
-            column_config={
-                "Style Name": st.column_config.TextColumn(disabled=True),
-                "Style Number": st.column_config.TextColumn(disabled=True),
-                "Seasonality Tags": st.column_config.TextColumn(
-                    help="Champ libre (ex: spring-summer, fall-winter, core, etc.)",
-                    required=False,
-                ),
-            },
-        )
 
-        # Keep latest visible edits in session (this avoids the 'type twice' issue)
+        edited_df = None
+        with st.form("seasonality_form", clear_on_submit=False):
+            edited_df = st.data_editor(
+                st.session_state["seasonality_df"],
+                key="seasonality_editor",
+                use_container_width=True,
+                hide_index=True,
+                num_rows="fixed",
+                column_config={
+                    "Style Name": st.column_config.TextColumn(disabled=True),
+                    "Style Number": st.column_config.TextColumn(disabled=True),
+                    "Seasonality Tags": st.column_config.TextColumn(
+                        help="Champ libre (ex: spring-summer, fall-winter, core, etc.)",
+                        required=False,
+                    ),
+                },
+            )
+
+            # One single action: submit = generate (also commits the last edited cell)
+            generate_clicked = st.form_submit_button(
+                "Générer le fichier Shopify",
+                type="secondary",
+                disabled=not (supplier_file and help_file),
+            )
+
+        # After submit, persist latest edits (prevents the 'type twice' issue)
         if isinstance(edited_df, pd.DataFrame):
             st.session_state["seasonality_df"] = edited_df
 
@@ -478,13 +499,15 @@ if supplier_file is not None:
 # 🔹 Projet pilote : pas de sélection de marque
 brand_choice = ""
 
-generate = st.button(
-    "Générer le fichier Shopify",
-    type="secondary",
-    disabled=not (supplier_file and help_file),
-)
+# If Seasonality form is not shown (no style columns), we still need a generate button
+if not generate_clicked:
+    generate_clicked = st.button(
+        "Générer le fichier Shopify",
+        type="secondary",
+        disabled=not (supplier_file and help_file),
+    )
 
-if generate:
+if generate_clicked:
     st.markdown("### Génération en cours")
     status = st.empty()
     progress = st.progress(0)
