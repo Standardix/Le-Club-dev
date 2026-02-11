@@ -111,10 +111,43 @@ SUPPLIERS = {
 
 }
 
-st.markdown("### 1️⃣ Sélection du fournisseur")
-supplier_name = st.selectbox("Choisir le fournisseur", sorted(SUPPLIERS.keys(), key=lambda x: x.lower()))
+def _read_tag_mapping_vendors(help_bytes: bytes) -> list[str]:
+    """Read Help Data -> 'Tag Mapping' sheet column A and return unique vendor names."""
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(help_bytes), data_only=True)
+    except Exception:
+        return []
+    if "Tag Mapping" not in wb.sheetnames:
+        return []
+    ws = wb["Tag Mapping"]
+    vendors: list[str] = []
+    seen = set()
+    for r in range(2, ws.max_row + 1):
+        v = ws.cell(row=r, column=1).value
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s or s.lower() == "nan":
+            continue
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        vendors.append(s)
+    return vendors
 
-st.markdown("### 2️⃣ Upload des fichiers")
+
+st.markdown("### 1️⃣ Upload des fichiers")
+help_file = st.file_uploader("Help data (.xlsx)", type=["xlsx"])
+
+st.markdown("### 2️⃣ Sélection du fournisseur")
+
+# Ajout des vendors provenant du Help Data -> onglet "Tag Mapping" (colonne A)
+_extra_vendors = _read_tag_mapping_vendors(help_file.getvalue()) if help_file is not None else []
+_supplier_options = sorted(set(SUPPLIERS.keys()).union(_extra_vendors), key=lambda x: x.lower())
+supplier_name = st.selectbox("Choisir le fournisseur", _supplier_options)
+
+st.markdown("### 3️⃣ Upload des fichiers")
 supplier_file = st.file_uploader("Fichier fournisseur (.xlsx ou .csv)", type=["xlsx","csv","xls"])
 
 # --- Validation format fournisseur ---
@@ -123,11 +156,8 @@ if supplier_file is not None:
         st.error("Format de fichier non supporté : ce fichier est dans un ancien format Excel (.xls). Veuillez l’enregistrer au format .xlsx, puis le téléverser à nouveau.")
         st.stop()
 
-help_file = st.file_uploader("Help data (.xlsx)", type=["xlsx"])
-
-
 existing_shopify_file = st.file_uploader("Fichier de produits existant dans Shopify (.xlsx)", type=["xlsx"])
-st.markdown("### 3️⃣ Tags")
+st.markdown("### 4️⃣ Tags")
 
 event_promo_tag = st.selectbox(
     "Event/Promotion Related",
@@ -478,7 +508,7 @@ if generate:
     progress = st.progress(0)
 
     try:
-        transform_fn = SUPPLIERS[supplier_name]
+        transform_fn = SUPPLIERS.get(supplier_name, run_abc)
 
         status.info("Préparation des fichiers…")
         progress.progress(10)
