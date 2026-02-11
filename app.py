@@ -5,7 +5,6 @@ import time
 import hashlib
 import pandas as pd
 import re
-import os
 
 
 def _read_csv_bytes(file_bytes: bytes) -> pd.DataFrame:
@@ -61,39 +60,6 @@ st.markdown(
 
 st.title("Générateur de fichier Shopify")
 
-# --- Documentation (téléchargements) ---
-
-import os
-
-with st.expander("📘 Documentation"):
-    col1, col2, col_spacer = st.columns([1, 1, 3])
-
-    with col1:
-        if os.path.exists("docs/ReadMe.pdf"):
-            with open("docs/ReadMe.pdf", "rb") as f:
-                st.download_button(
-                    label="📄 Télécharger le guide d'utilisation",
-                    data=f,
-                    file_name="Guide_d'utilisation.pdf",
-                    mime="application/pdf",
-                )
-        else:
-            st.warning("Fichier manquant : ReadMe.pdf")
-
-    with col2:
-        if os.path.exists("docs/Règles en place.pdf"):
-            with open("docs/Règles en place.pdf", "rb") as f:
-                st.download_button(
-                    label="📊 Télécharger les règles des colonnes",
-                    data=f,
-                    file_name="Regles_des_colonnes.pdf",
-                    mime="application/pdf",
-                )
-        else:
-            st.warning("Fichier manquant : Règles en place.pdf")
-
-
-
 SUPPLIERS = {
     "Balmoral": run_abc,
     "Bandit": run_abc,
@@ -118,9 +84,6 @@ st.markdown("### 2️⃣ Upload des fichiers")
 supplier_file = st.file_uploader("Fichier fournisseur (.xlsx ou .csv)", type=["xlsx","csv","xls"])
 
 # --- Validation format fournisseur ---
-# Default: no seasonality mapping unless detected
-style_season_map = {}
-
 if supplier_file is not None:
     if supplier_file.name.lower().endswith(".xls"):
         st.error("Format de fichier non supporté : ce fichier est dans un ancien format Excel (.xls). Veuillez l’enregistrer au format .xlsx, puis le téléverser à nouveau.")
@@ -450,26 +413,25 @@ if supplier_file is not None:
             },
         )
 
-        # Persist immediately: avoids having to type twice and keeps values across reruns
-        st.session_state["seasonality_df"] = edited_df.copy()
+        # Use the widget live state; normalize to DataFrame
+        current_df = st.session_state.get("seasonality_editor", edited_df)
+        if not isinstance(current_df, pd.DataFrame):
+            try:
+                current_df = pd.DataFrame(current_df)
+            except Exception:
+                current_df = edited_df
+        # Persist edits so users do NOT need to type twice (Streamlit reruns on each edit).
+        # IMPORTANT: we update our own state key (seasonality_df), not the widget key, to avoid StreamlitAPIException.
+        st.session_state["seasonality_df"] = current_df
 
-        # Build mapping from the canonical dataframe (NOT from the widget internal state)
         style_season_map = {}
-        df_for_map = st.session_state.get("seasonality_df")
-        if isinstance(df_for_map, pd.DataFrame) and not df_for_map.empty:
-            for _, r in df_for_map.iterrows():
-                raw_key = r.get(key_col, "")
-                # UX uses the base before the first "-" for Style Number
-                if str(key_col).lower() == "style number":
-                    k = _clean_style_number_base(raw_key)
-                else:
-                    k = _clean_style_key(raw_key)
-                v = str(r.get("Seasonality Tags", "")).strip()
-                if k and v:
-                    style_season_map[k] = v
+        for _, r in current_df.iterrows():
+            k = _clean_style_key(r.get(key_col, ""))
+            v = str(r.get("Seasonality Tags", "")).strip()
+            if k and v:
+                style_season_map[k] = v
     else:
         st.info("Aucun champ 'Style Name' ou 'Style Number' détecté dans le fichier. Seasonality ignorée.")
-
 
 # 🔹 Projet pilote : pas de sélection de marque
 brand_choice = ""
