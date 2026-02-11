@@ -484,6 +484,45 @@ if supplier_file is not None:
             },
         )
 
+        # --- Quick paste helpers for Seasonality (spreadsheet-like workflows) ---
+        with st.expander('Collage rapide (Seasonality)', expanded=False):
+            col_a, col_b = st.columns([2, 1])
+            with col_a:
+                st.caption('Astuce : colle une colonne (Ctrl+V) — 1 valeur par ligne — pour remplir rapidement la colonne "Seasonality Tags".')
+                pasted = st.text_area('Coller une liste (1 valeur par ligne)', value='', height=120, key='seasonality_paste_text')
+                apply_order = st.button('Appliquer (par ordre des lignes)', key='seasonality_apply_by_order')
+            with col_b:
+                fill_value = st.text_input('Remplir avec', value='', key='seasonality_fill_value')
+                # searchable multiselect so the user can type letters to jump quickly
+                style_options = st.session_state['seasonality_df'][key_col].astype(str).tolist()
+                to_fill = st.multiselect('Styles à remplir', options=style_options, default=[], key='seasonality_fill_styles')
+                apply_fill = st.button('Appliquer aux styles sélectionnés', key='seasonality_apply_fill')
+
+            if apply_order and pasted.strip():
+                vals = [v.strip() for v in pasted.replace('\r\n', '\n').replace('\r', '\n').split('\n')]
+                df_tmp = st.session_state.get('seasonality_editor', edited_df)
+                if not isinstance(df_tmp, pd.DataFrame):
+                    df_tmp = pd.DataFrame(df_tmp)
+                df_tmp = df_tmp.copy()
+                # apply line-by-line in the current visible order
+                for i in range(min(len(df_tmp), len(vals))):
+                    df_tmp.at[i, 'Seasonality Tags'] = vals[i]
+                st.session_state['seasonality_df'] = df_tmp
+                # also update widget state so the table reflects it immediately
+                st.session_state['seasonality_editor'] = df_tmp
+
+            if apply_fill and fill_value.strip() and to_fill:
+                df_tmp = st.session_state.get('seasonality_editor', edited_df)
+                if not isinstance(df_tmp, pd.DataFrame):
+                    df_tmp = pd.DataFrame(df_tmp)
+                df_tmp = df_tmp.copy()
+                target_set = set([str(x) for x in to_fill])
+                for i, v in enumerate(df_tmp[key_col].astype(str).tolist()):
+                    if v in target_set:
+                        df_tmp.at[i, 'Seasonality Tags'] = fill_value.strip()
+                st.session_state['seasonality_df'] = df_tmp
+                st.session_state['seasonality_editor'] = df_tmp
+
         # Use the widget live state; normalize to DataFrame
         current_df = st.session_state.get("seasonality_editor", edited_df)
         if not isinstance(current_df, pd.DataFrame):
