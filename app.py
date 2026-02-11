@@ -111,30 +111,60 @@ SUPPLIERS = {
 
 }
 
-def _read_tag_mapping_vendors(help_bytes: bytes) -> list[str]:
-    """Read Help Data -> 'Tag Mapping' sheet column A and return unique vendor names."""
-    try:
-        wb = openpyxl.load_workbook(io.BytesIO(help_bytes), data_only=True)
-    except Exception:
-        return []
-    if "Tag Mapping" not in wb.sheetnames:
-        return []
-    ws = wb["Tag Mapping"]
-    vendors: list[str] = []
-    seen = set()
-    for r in range(2, ws.max_row + 1):
-        v = ws.cell(row=r, column=1).value
-        if v is None:
-            continue
-        s = str(v).strip()
-        if not s or s.lower() == "nan":
-            continue
-        key = s.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        vendors.append(s)
-    return vendors
+TAG_MAPPING_VENDORS: list[str] = [
+    "Aesop",
+    "Alba Optics",
+    "ARC",
+    "Balmoral",
+    "Bandit",
+    "Books",
+    "Burgh",
+    "Cadence",
+    "Café du Cycliste",
+    "Ciele",
+    "Daysaver",
+    "District Vision",
+    "DUSK",
+    "Endorf",
+    "Fingerscrossed",
+    "Hammerhead",
+    "Hermanos Koumori",
+    "Human Essentials",
+    "Jason Markk",
+    "KASK",
+    "Ketone-IQ",
+    "Koa",
+    "KOO",
+    "Le Braquet",
+    "Look",
+    "MAAP",
+    "Maurten",
+    "Näak",
+    "Neatcleats",
+    "norda",
+    "Oakley",
+    "Pas Normal Studios",
+    "PB Swiss",
+    "Post Carry Co.",
+    "QUOC",
+    "Rapha",
+    "Salt & Stone",
+    "Satisfy",
+    "Silca",
+    "Skratch Labs",
+    "Soar",
+    "Sweet Protection",
+    "Thule",
+    "tons",
+    "Tracksmith",
+    "Upika",
+    "Veloskin",
+    "veloToze",
+    "Watrbodl",
+    "Xact Nutrition",
+]
+
+
 
 
 st.markdown("### 1️⃣ Upload des fichiers")
@@ -142,9 +172,8 @@ help_file = st.file_uploader("Help data (.xlsx)", type=["xlsx"])
 
 st.markdown("### 2️⃣ Sélection du fournisseur")
 
-# Ajout des vendors provenant du Help Data -> onglet "Tag Mapping" (colonne A)
-_extra_vendors = _read_tag_mapping_vendors(help_file.getvalue()) if help_file is not None else []
-_supplier_options = sorted(set(SUPPLIERS.keys()).union(_extra_vendors), key=lambda x: x.lower())
+# Vendors additionnels (hard codés) issus de l’onglet "Tag Mapping" (colonne A)
+_supplier_options = sorted(set(SUPPLIERS.keys()).union(TAG_MAPPING_VENDORS), key=lambda x: x.lower())
 supplier_name = st.selectbox("Choisir le fournisseur", _supplier_options)
 
 st.markdown("### 3️⃣ Upload des fichiers")
