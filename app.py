@@ -138,6 +138,10 @@ event_promo_tag = st.selectbox(
     index=0,
 )
 
+# 🔹 Projet pilote : pas de sélection de marque (on garde la variable pour l'API fournisseur)
+brand_choice = ""
+
+
 style_season_map: dict[str, str] = {}
 
 generate_clicked = False  # unified submit trigger
@@ -501,7 +505,7 @@ if generate_clicked:
                 existing_shopify_xlsx_bytes=(existing_shopify_file.getvalue() if existing_shopify_file is not None else None),
                 vendor_name=supplier_name,
                 brand_choice=brand_choice,  # toujours vide pour le pilote
-                            event_promo_tag=event_promo_tag,
+                event_promo_tag=event_promo_tag,
                 style_season_map=style_season_map,
             )
 
