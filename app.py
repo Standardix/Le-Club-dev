@@ -373,6 +373,8 @@ if supplier_file is not None:
         st.markdown("#### Seasonality")
 
         key_col = "Style Number" if "Style Number" in style_rows_df.columns else "Style Name"
+        # store for later (Generate button) so we can recompute the map safely
+        st.session_state["seasonality_key_col"] = key_col
         # Stabilize ordering so the fingerprint doesn't change between reruns
         style_rows_df = style_rows_df.sort_values(by=key_col).reset_index(drop=True)
 
@@ -434,8 +436,10 @@ if supplier_file is not None:
             tmp["Seasonality Tags"] = ""
             st.session_state["seasonality_df"] = tmp
 
-        with st.form("seasonality_form", clear_on_submit=False):
-            edited_df = st.data_editor(
+        # UX: pas de bouton séparé.
+        # Les tags de saison seront appliqués automatiquement AU MOMENT DE "Générer le fichier Shopify".
+        # (Le tableau reste éditable, et on conserve la dernière version dans session_state.)
+        edited_df = st.data_editor(
             st.session_state["seasonality_df"],
             key="seasonality_editor",
             use_container_width=True,
@@ -449,23 +453,19 @@ if supplier_file is not None:
                     required=False,
                 ),
             },
-            )
-            apply_seasonality = st.form_submit_button("Appliquer les tags de saison")
+        )
 
-            # NOTE: Le formulaire évite le rerun à chaque frappe (écran gris).
-            # Les valeurs sont appliquées seulement au clic sur le bouton.
-            if apply_seasonality:
-                current_df = edited_df if isinstance(edited_df, pd.DataFrame) else pd.DataFrame(edited_df)
-                st.session_state["seasonality_df"] = current_df
-            else:
-                current_df = st.session_state["seasonality_df"]
+        # Persist the freshest dataframe right away
+        current_df = edited_df if isinstance(edited_df, pd.DataFrame) else pd.DataFrame(edited_df)
+        st.session_state["seasonality_df"] = current_df
 
-            style_season_map = {}
-            for _, r in current_df.iterrows():
-                k = _clean_style_key(r.get(key_col, ""))
-                v = str(r.get("Seasonality Tags", "")).strip()
-                if k and v:
-                    style_season_map[k] = v
+        # Prepare a map for downstream (will be recomputed on Generate too, to be extra safe)
+        style_season_map = {}
+        for _, r in current_df.iterrows():
+            k = _clean_style_key(r.get(key_col, ""))
+            v = str(r.get("Seasonality Tags", "")).strip()
+            if k and v:
+                style_season_map[k] = v
     else:
         st.info("Aucun champ 'Style Name' ou 'Style Number' détecté dans le fichier. Seasonality ignorée.")
 
@@ -485,6 +485,17 @@ if generate:
 
     try:
         transform_fn = SUPPLIERS[supplier_name]
+
+        # Recompute seasonality map at the moment of generation (ensures latest edits are applied)
+        style_season_map = {}
+        season_df = st.session_state.get("seasonality_df")
+        season_key = st.session_state.get("seasonality_key_col")
+        if isinstance(season_df, pd.DataFrame) and season_key in (season_df.columns if season_df is not None else []) and "Seasonality Tags" in season_df.columns:
+            for _, r in season_df.iterrows():
+                k = _clean_style_key(r.get(season_key, ""))
+                v = str(r.get("Seasonality Tags", "")).strip()
+                if k and v:
+                    style_season_map[k] = v
 
         status.info("Préparation des fichiers…")
         progress.progress(10)
