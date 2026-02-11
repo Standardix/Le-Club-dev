@@ -447,18 +447,18 @@ if supplier_file is not None:
             },
         )
 
-        # Persist the edited dataframe (avoids relying on the widget's internal session state,
-        # which can be a dict of edits depending on Streamlit version).
-        st.session_state["seasonality_df"] = edited_df
+        # Use the widget live state; normalize to DataFrame
+        # Persist the edited dataframe (do NOT write to the widget key).
+        st.session_state["seasonality_df"] = edited_df.copy()
 
-        # Build the mapping directly from the edited dataframe
+        # Build map from the edited dataframe (stable across reruns)
+        key_fn = _clean_style_number_base if key_col == "Style Number" else _clean_style_key
         style_season_map = {}
         for _, r in edited_df.iterrows():
-            k = _clean_style_key(r.get(key_col, ""))
+            k = key_fn(r.get(key_col, ""))
             v = str(r.get("Seasonality Tags", "")).strip()
             if k and v:
                 style_season_map[k] = v
-    else:
         st.info("Aucun champ 'Style Name' ou 'Style Number' détecté dans le fichier. Seasonality ignorée.")
 
 # 🔹 Projet pilote : pas de sélection de marque
