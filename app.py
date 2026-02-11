@@ -95,56 +95,20 @@ with st.expander("📘 Documentation"):
 
 
 SUPPLIERS = {
-    "Aesop": run_abc,
-    "Alba Optics": run_abc,
-    "ARC": run_abc,
     "Balmoral": run_abc,
     "Bandit": run_abc,
-    "Books": run_abc,
-    "Burgh": run_abc,
-    "Cadence": run_abc,
     "Café du Cycliste": run_abc,
     "Ciele": run_abc,
-    "Daysaver": run_abc,
     "District Vision": run_abc,
-    "DUSK": run_abc,
-    "Endorf": run_abc,
     "Fingerscrossed": run_abc,
-    "Hammerhead": run_abc,
-    "Hermanos Koumori": run_abc,
-    "Human Essentials": run_abc,
-    "Jason Markk": run_abc,
-    "KASK": run_abc,
-    "Ketone-IQ": run_abc,
-    "Koa": run_abc,
-    "KOO": run_abc,
-    "Le Braquet": run_abc,
-    "Look": run_abc,
     "MAAP": run_abc,
-    "Maurten": run_abc,
-    "Näak": run_abc,
-    "Neatcleats": run_abc,
     "norda": run_abc,
-    "Oakley": run_abc,
     "Pas Normal Studios": run_abc,
-    "PB Swiss": run_abc,
-    "Post Carry Co.": run_abc,
-    "QUOC": run_abc,
     "Rapha": run_abc,
-    "Salt & Stone": run_abc,
-    "Satisfy": run_abc,
-    "Silca": run_abc,
-    "Skratch Labs": run_abc,
     "Soar": run_abc,
-    "Sweet Protection": run_abc,
-    "Thule": run_abc,
-    "tons": run_abc,
     "Tracksmith": run_abc,
-    "Upika": run_abc,
-    "Veloskin": run_abc,
-    "veloToze": run_abc,
-    "Watrbodl": run_abc,
-    "Xact Nutrition": run_abc,
+    "Satisfy": run_abc,
+
 }
 
 st.markdown("### 1️⃣ Sélection du fournisseur")
@@ -483,16 +447,14 @@ if supplier_file is not None:
             },
         )
 
-        # Use the widget live state; normalize to DataFrame
-        current_df = st.session_state.get("seasonality_editor", edited_df)
-        if not isinstance(current_df, pd.DataFrame):
-            try:
-                current_df = pd.DataFrame(current_df)
-            except Exception:
-                current_df = edited_df
+        # Persist the edited dataframe (avoids relying on the widget's internal session state,
+        # which can be a dict of edits depending on Streamlit version).
+        st.session_state["seasonality_df"] = edited_df
+
+        # Build the mapping directly from the edited dataframe
         style_season_map = {}
-        for _, r in current_df.iterrows():
-            k = (_clean_style_number_base(r.get(key_col, "")) if "style number" in str(key_col).lower() else _clean_style_key(r.get(key_col, "")))
+        for _, r in edited_df.iterrows():
+            k = _clean_style_key(r.get(key_col, ""))
             v = str(r.get("Seasonality Tags", "")).strip()
             if k and v:
                 style_season_map[k] = v
