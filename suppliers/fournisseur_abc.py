@@ -556,16 +556,6 @@ def _clean_style_key(v) -> str:
     # if Excel treated numeric as float: 123.0 -> 123
     s = re.sub(r"^(\d+)\.0+$", r"\1", s)
     return s
-def _clean_style_number_base(v) -> str:
-    """
-    Normalize a style number and keep only the base portion before the first '-'
-    (to match the Seasonality UX behavior, e.g. '11000-FA-SAB' -> '11000').
-    """
-    s = _norm(v)
-    if '-' in s:
-        s = s.split('-', 1)[0]
-    return _clean_style_key(s)
-
 
 def _strip_reg_for_handle(s: str) -> str:
     """Handle only: remove ® and (r)/[r] to keep URL safe."""
@@ -1391,7 +1381,7 @@ def run_transform(
     style_season_map = style_season_map or {}
     vendor_key = _colkey(vendor_name)
     is_satisfy = vendor_key in ("satisfy",)
-    style_season_map = { _clean_style_number_base(k): v for k, v in style_season_map.items() }
+    style_season_map = { _clean_style_key(k): v for k, v in style_season_map.items() }
 
     # -----------------------------------------------------
     # Supplier reader (multi-sheet capable)
@@ -2177,7 +2167,11 @@ def run_transform(
         s = _norm(t)
         if not s:
             return False
+        # invalid placeholders
         if "?" in s:
+            return False
+        # treat "aucun" (any casing) as invalid / needs validation
+        if re.search(r"aucun", s, flags=re.IGNORECASE):
             return False
         return len(s.strip()) >= 3
 
@@ -2195,11 +2189,25 @@ def run_transform(
     # Seasonality key (to apply Seasonality Tags per style)
     # -----------------------------------------------------
     style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
+    # If "Style" was also used as the Description column, it is NOT a reliable seasonality key.
+    # In that case, prefer Style Name/Style Number columns instead.
+    if style_num_col is not None and 'desc_col' in locals() and style_num_col == desc_col:
+        style_num_col = None
     style_name_col = _first_existing_col(sup, ["Style Name", "style name",
             "style_name", "STYLE_NAME", "Product Name", "Name"])
     sup["_seasonality_key"] = ""
+    def _clean_style_number_base_local(v) -> str:
+        """
+        Seasonality: keep only what is BEFORE the first hyphen.
+        Example: 11000-FA-SAB -> 11000
+        """
+        s = _clean_style_key(v)
+        if not s:
+            return ""
+        return s.split("-", 1)[0].strip()
+
     if style_num_col is not None:
-        sup["_seasonality_key"] = _series_str_clean(sup[style_num_col]).map(_clean_style_number_base)
+        sup["_seasonality_key"] = _series_str_clean(sup[style_num_col]).map(_clean_style_number_base_local)
     elif style_name_col is not None:
         sup["_seasonality_key"] = _series_str_clean(sup[style_name_col]).map(_clean_style_key)
 
@@ -2225,17 +2233,7 @@ def run_transform(
             tags.append(event_promo_tag)
 
         # Seasonality tag (per style)
-        # Primary key comes from the supplier Style Number/Name detection.
-        season_key = _clean_style_number_base(r.get("_seasonality_key", ""))
-        stg = style_season_map.get(season_key)
-
-        # Fallback: some suppliers don't expose a clean Style Number column,
-        # but the base style code is still present in Variant SKU (e.g. 'MB0206AR-4880' -> 'MB0206AR').
-        if not stg:
-            sku_base = _clean_style_number_base(str(r.get("_variant_sku", "")).split("-", 1)[0])
-            if sku_base:
-                stg = style_season_map.get(sku_base)
-
+        stg = style_season_map.get(_clean_style_key(r.get("_seasonality_key", "")))
         if stg:
             tags.append(stg)
 
