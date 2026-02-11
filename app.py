@@ -59,19 +59,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown("""
-    <style>
-    /* Seasonality quick-fill: make selected option "chips" blue (red is reserved for errors) */
-    div[data-baseweb="tag"] {
-        background-color: #dbeafe !important;
-        color: #1e3a8a !important;
-        border: 1px solid #bfdbfe !important;
-    }
-    div[data-baseweb="tag"] span { color: #1e3a8a !important; }
-    div[data-baseweb="tag"] svg { fill: #1e3a8a !important; }
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("Générateur de fichier Shopify")
 
 # --- Documentation (téléchargements) ---
@@ -497,51 +484,20 @@ if supplier_file is not None:
             },
         )
 
-        # Use the returned dataframe from st.data_editor (most reliable across Streamlit versions)
-        current_df = edited_df if isinstance(edited_df, pd.DataFrame) else st.session_state.get("seasonality_df")
-
-        # --- Collage rapide (Seasonality) : remplir plusieurs styles avec la même valeur ---
-        with st.expander("Collage rapide (Seasonality)"):
-            c_left, c_right = st.columns([1, 1])
-            with c_left:
-                quick_value = st.text_input("Remplir avec", key="seasonality_quick_value")
-                apply_quick = st.button("Appliquer aux styles sélectionnés", key="seasonality_quick_apply")
-            with c_right:
-                style_options = sorted({str(x).strip() for x in current_df.get(key_col, pd.Series([], dtype=str)).astype(str).tolist() if str(x).strip()})
-                selected_styles = st.multiselect("Styles à remplir", options=style_options, key="seasonality_quick_styles")
-
-            if apply_quick:
-                v = (quick_value or "").strip()
-                if not v:
-                    st.warning("Veuillez entrer une valeur dans « Remplir avec ».")
-                elif not selected_styles:
-                    st.warning("Veuillez sélectionner au moins un style.")
-                else:
-                    df_upd = current_df.copy()
-                    if key_col == "Style Number":
-                        sel = { _clean_style_number_base(s) for s in selected_styles }
-                        df_upd.loc[df_upd[key_col].astype(str).map(_clean_style_number_base).isin(sel), "Seasonality Tags"] = v
-                    else:
-                        sel = { _clean_style_key(s) for s in selected_styles }
-                        df_upd.loc[df_upd[key_col].astype(str).map(_clean_style_key).isin(sel), "Seasonality Tags"] = v
-
-                    st.session_state["seasonality_df"] = df_upd
-                    # Important: do NOT write into the widget key; reset it so it reloads from seasonality_df
-                    if "seasonality_editor" in st.session_state:
-                        del st.session_state["seasonality_editor"]
-                    st.rerun()
-
+        # Use the widget live state; normalize to DataFrame
+        current_df = st.session_state.get("seasonality_editor", edited_df)
+        if not isinstance(current_df, pd.DataFrame):
+            try:
+                current_df = pd.DataFrame(current_df)
+            except Exception:
+                current_df = edited_df
         style_season_map = {}
-        for _, r in st.session_state.get('seasonality_df', current_df).iterrows():
+        for _, r in current_df.iterrows():
             k = (_clean_style_number_base(r.get(key_col, "")) if "style number" in str(key_col).lower() else _clean_style_key(r.get(key_col, "")))
             v = str(r.get("Seasonality Tags", "")).strip()
             if k and v:
                 style_season_map[k] = v
     else:
-        # Clear any stale Seasonality state from a previous upload
-        for k in ["seasonality_df", "seasonality_fp", "seasonality_editor", "seasonality_quick_styles", "seasonality_quick_value"]:
-            if k in st.session_state:
-                del st.session_state[k]
         st.info("Aucun champ 'Style Name' ou 'Style Number' détecté dans le fichier. Seasonality ignorée.")
 
 # 🔹 Projet pilote : pas de sélection de marque
