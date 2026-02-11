@@ -791,51 +791,6 @@ def _read_list_column(wb, sheet_name: str) -> list[str]:
 
 
 
-def _read_tag_mapping(wb, sheet_name: str = "Tag Mapping") -> tuple[dict[str, str], dict[str, str]]:
-    """Read Help Data -> Tag Mapping.
-
-    Expected columns:
-      A: Vendor
-      B: Vendor Tag (added for chosen vendor)
-      D: Custom Product Type
-      E: Product Type Tag (added based on output 'Custom Product Type')
-
-    Returns:
-      vendor_tag_map: vendor(lower) -> tag (col B)
-      product_type_tag_map: normalized product type key -> tag (col E)
-    """
-    if sheet_name not in wb.sheetnames:
-        return {}, {}
-    ws = wb[sheet_name]
-
-    vendor_tag_map: dict[str, str] = {}
-    pt_tag_map: dict[str, str] = {}
-
-    for r in range(2, ws.max_row + 1):
-        v_vendor = ws.cell(row=r, column=1).value
-        v_vendor_tag = ws.cell(row=r, column=2).value
-        v_pt = ws.cell(row=r, column=4).value
-        v_pt_tag = ws.cell(row=r, column=5).value
-
-        # Vendor -> Vendor Tag
-        if v_vendor is not None:
-            vend = str(v_vendor).strip()
-            if vend and vend.lower() != "nan":
-                tag = "" if v_vendor_tag is None else str(v_vendor_tag).strip()
-                if tag and tag.lower() != "nan":
-                    vendor_tag_map.setdefault(vend.lower(), tag)
-
-        # Product Type -> Product Type Tag
-        if v_pt is not None:
-            pt = str(v_pt).strip()
-            if pt and pt.lower() != "nan":
-                tag = "" if v_pt_tag is None else str(v_pt_tag).strip()
-                if tag and tag.lower() != "nan":
-                    pt_tag_map.setdefault(_norm_key(pt), tag)
-
-    return vendor_tag_map, pt_tag_map
-
-
 def _read_product_type_gendered_map(wb, sheet_name: str = "Product Types") -> dict[str, bool]:
     """Read Product Types sheet to know if a Custom Product Type is gendered.
 
@@ -1381,7 +1336,12 @@ def run_transform(
     style_season_map = style_season_map or {}
     vendor_key = _colkey(vendor_name)
     is_satisfy = vendor_key in ("satisfy",)
-    style_season_map = { _clean_style_key(k): v for k, v in style_season_map.items() }
+    # Normalize keys (keep what is BEFORE the first hyphen) and strip values
+    style_season_map = {
+        _clean_style_key(str(k).split("-", 1)[0]): str(v).strip()
+        for k, v in style_season_map.items()
+        if _clean_style_key(str(k).split("-", 1)[0]) and str(v).strip()
+    }
 
     # -----------------------------------------------------
     # Supplier reader (multi-sheet capable)
@@ -1586,11 +1546,6 @@ def run_transform(
     shopify_cat_rows = _read_category_rows(wb, "Shopify Product Category")
     google_cat_rows = _read_category_rows(wb, "Google Product Category")
     product_types = _read_list_column(wb, "Product Types")
-
-    # Tag Mapping (Help Data)
-    tagmap_vendor_tag_map, tagmap_pt_tag_map = _read_tag_mapping(wb, "Tag Mapping")
-    vendor_extra_tag = tagmap_vendor_tag_map.get(str(vendor_name or "").strip().lower(), "")
-
 
     # Canonical Product Type resolver:
     # Output Custom Product Type MUST match EXACTLY one value from Help Data -> Product Types (col A).
@@ -2159,55 +2114,16 @@ def run_transform(
     sup["_siblings"] = sup["_handle"]
 
 
-    
-    # -----------------------------------------------------
-    # Tag Mapping -> Product Type Tag (per row) + validation flag
-    # -----------------------------------------------------
-    def _is_valid_tagmapping_tag(t: str) -> bool:
-        s = _norm(t)
-        if not s:
-            return False
-        # invalid placeholders
-        if "?" in s:
-            return False
-        # treat "aucun" (any casing) as invalid / needs validation
-        if re.search(r"aucun", s, flags=re.IGNORECASE):
-            return False
-        return len(s.strip()) >= 3
-
-    def _lookup_pt_tag(pt: str) -> str:
-        if not pt:
-            return ""
-        return str(tagmap_pt_tag_map.get(_norm_key(pt), "")).strip()
-
-    sup["_tagmap_pt_tag_raw"] = sup["_product_type"].apply(_lookup_pt_tag)
-    sup["_tagmap_pt_tag_valid"] = sup["_tagmap_pt_tag_raw"].apply(_is_valid_tagmapping_tag)
-    sup["_tagmap_pt_invalid"] = sup["_product_type"].astype(str).str.strip().ne("") & (~sup["_tagmap_pt_tag_valid"].astype(bool))
-
-# Tags (keep standardized color/gender tags)
+    # Tags (keep standardized color/gender tags)
     # -----------------------------------------------------
     # Seasonality key (to apply Seasonality Tags per style)
     # -----------------------------------------------------
     style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
-    # If "Style" was also used as the Description column, it is NOT a reliable seasonality key.
-    # In that case, prefer Style Name/Style Number columns instead.
-    if style_num_col is not None and 'desc_col' in locals() and style_num_col == desc_col:
-        style_num_col = None
     style_name_col = _first_existing_col(sup, ["Style Name", "style name",
             "style_name", "STYLE_NAME", "Product Name", "Name"])
     sup["_seasonality_key"] = ""
-    def _clean_style_number_base_local(v) -> str:
-        """
-        Seasonality: keep only what is BEFORE the first hyphen.
-        Example: 11000-FA-SAB -> 11000
-        """
-        s = _clean_style_key(v)
-        if not s:
-            return ""
-        return s.split("-", 1)[0].strip()
-
     if style_num_col is not None:
-        sup["_seasonality_key"] = _series_str_clean(sup[style_num_col]).map(_clean_style_number_base_local)
+        sup["_seasonality_key"] = _series_str_clean(sup[style_num_col]).map(_clean_style_key)
     elif style_name_col is not None:
         sup["_seasonality_key"] = _series_str_clean(sup[style_name_col]).map(_clean_style_key)
 
@@ -2236,15 +2152,6 @@ def run_transform(
         stg = style_season_map.get(_clean_style_key(r.get("_seasonality_key", "")))
         if stg:
             tags.append(stg)
-
-        # Vendor tag (Help Data -> Tag Mapping col B)
-        if vendor_extra_tag:
-            tags.append(vendor_extra_tag)
-
-        # Product Type tag (Help Data -> Tag Mapping col E)
-        pt_tag = r.get("_tagmap_pt_tag_raw", "")
-        if r.get("_tagmap_pt_tag_valid", False) and pt_tag:
-            tags.append(pt_tag)
 
         return ", ".join([t for t in tags if t])
 
@@ -2663,7 +2570,6 @@ def run_transform(
     # Internal flag for styling (not exported)
     out["OUT_COLOR_HIT"] = sup.get("_color_map_hit", True)
     out["OUT_GENDER_REVIEW"] = sup.get("OUT_GENDER_REVIEW", False)
-    out["OUT_TAGMAP_INVALID"] = sup.get("_tagmap_pt_invalid", False)
 
 
     # Yellow rules
@@ -2727,50 +2633,6 @@ def run_transform(
         wb.save(out)
         out.seek(0)
         return out
-
-    def _apply_red_fill_for_tagmapping(buffer: io.BytesIO, sheet_name: str, rows_0based: list[int]) -> io.BytesIO:
-        """Apply RED background fill to the 'Tags' cell for rows where Tag Mapping is missing/invalid.
-        If the Tags font was already RED (Seasonal check), switch it to WHITE for readability.
-        """
-        buffer.seek(0)
-        wb = openpyxl.load_workbook(buffer)
-        if sheet_name not in wb.sheetnames:
-            return buffer
-        ws = wb[sheet_name]
-
-        # Find Tags column index from header row (row 1)
-        tags_col_idx = None
-        for c in range(1, ws.max_column + 1):
-            v = ws.cell(row=1, column=c).value
-            if str(v).strip() == "Tags":
-                tags_col_idx = c
-                break
-        if tags_col_idx is None:
-            return buffer
-
-        from copy import copy
-        white_font_color = openpyxl.styles.colors.Color(rgb="FFFFFFFF")
-
-        for df_i in rows_0based:
-            excel_row = df_i + 2
-            cell = ws.cell(row=excel_row, column=tags_col_idx)
-            cell.fill = RED_FILL
-
-            # If the text is already red, make it white
-            try:
-                rgb = (cell.font.color.rgb if cell.font and cell.font.color else None)
-            except Exception:
-                rgb = None
-            if rgb and str(rgb).upper() in ("FFFF0000", "FF0000"):
-                f = copy(cell.font)
-                f.color = white_font_color
-                cell.font = f
-
-        outb = io.BytesIO()
-        wb.save(outb)
-        outb.seek(0)
-        return outb
-
     def _apply_red_font_for_color_multi(buffer: io.BytesIO, sheet_name: str, cols: list[str]) -> io.BytesIO:
         """Apply red font to specified columns when the cell contains '/' (ex: multi-colour)."""
         buffer.seek(0)
@@ -2868,17 +2730,6 @@ def run_transform(
     buffer = _apply_red_font_for_tags(buffer, "products", _rows_to_color_for_df(products_df))
     buffer = _apply_red_font_for_tags(buffer, "do not import", _rows_to_color_for_df(do_not_import_df))
 
-    # Red fill for Tags when Tag Mapping (product type -> tag) is missing/invalid
-    def _rows_tagmap_invalid(df_slice: pd.DataFrame) -> list[int]:
-        if "OUT_TAGMAP_INVALID" not in df_slice.columns:
-            return []
-        mask = df_slice["OUT_TAGMAP_INVALID"].astype(bool)
-        return [i for i, v in enumerate(mask.tolist()) if v]
-
-    buffer = _apply_red_fill_for_tagmapping(buffer, "products", _rows_tagmap_invalid(products_df))
-    buffer = _apply_red_fill_for_tagmapping(buffer, "do not import", _rows_tagmap_invalid(do_not_import_df))
-
-
     buffer = _apply_yellow_for_empty(buffer, "products", yellow_if_empty_cols)
     buffer = _apply_yellow_for_empty(buffer, "do not import", yellow_if_empty_cols)
     # Red font for Title when it contains "?" or "/" (needs manual review)
@@ -2955,7 +2806,7 @@ def run_transform(
         "Handle": "ROUGE = Le handle existe déjà dans le fichier d’inventaire fourni.",
         "Title": "ROUGE = Le titre comporte un des deux caractères suivants: ? ou /.",
         "SEO Title": "ROUGE = Le titre comporte un des deux caractères suivants: ? ou /.",
-        "Tags": "ROUGE (texte) = Assurez-vous que les tags Seasonal sont bien les bons. ROUGE (fond) = Tag manquant/invalide dans Help Data > Tag Mapping (col E) pour ce Custom Product Type.",
+        "Tags": "ROUGE = Assurez-vous que les tags Seasonal sont bien les bons.",
         "Metafield: colour": "ROUGE = Les couleurs ne sont pas présentes dans le mapping (Help Data).",
         "Metafield: mm-google-shopping.color": "ROUGE = Les couleurs ne sont pas présentes dans le mapping (Help Data).",
         "Custom Product Type": "Assurez-vous que les catégories trouvées sont bien les bonnes.",
