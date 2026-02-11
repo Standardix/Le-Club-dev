@@ -557,6 +557,14 @@ def _clean_style_key(v) -> str:
     s = re.sub(r"^(\d+)\.0+$", r"\1", s)
     return s
 
+def _clean_style_number_base(v) -> str:
+    """Keep only what is BEFORE the first hyphen (Seasonality UX behavior)."""
+    s = _clean_style_key(v)
+    if not s:
+        return ""
+    return s.split("-", 1)[0].strip()
+
+
 def _strip_reg_for_handle(s: str) -> str:
     """Handle only: remove ® and (r)/[r] to keep URL safe."""
     t = _norm(s)
@@ -1336,12 +1344,7 @@ def run_transform(
     style_season_map = style_season_map or {}
     vendor_key = _colkey(vendor_name)
     is_satisfy = vendor_key in ("satisfy",)
-    # Normalize keys (keep what is BEFORE the first hyphen) and strip values
-    style_season_map = {
-        _clean_style_key(str(k).split("-", 1)[0]): str(v).strip()
-        for k, v in style_season_map.items()
-        if _clean_style_key(str(k).split("-", 1)[0]) and str(v).strip()
-    }
+    style_season_map = { _clean_style_key(k): v for k, v in style_season_map.items() }
 
     # -----------------------------------------------------
     # Supplier reader (multi-sheet capable)
@@ -2123,10 +2126,11 @@ def run_transform(
             "style_name", "STYLE_NAME", "Product Name", "Name"])
     sup["_seasonality_key"] = ""
     if style_num_col is not None:
-        sup["_seasonality_key"] = _series_str_clean(sup[style_num_col]).map(_clean_style_key)
+        sup["_seasonality_key"] = _series_str_clean(sup[style_num_col]).map(_clean_style_number_base)
     elif style_name_col is not None:
         sup["_seasonality_key"] = _series_str_clean(sup[style_name_col]).map(_clean_style_key)
 
+    seasonality_key_fn = _clean_style_number_base if style_num_col is not None else _clean_style_key
     def _make_tags(r):
         tags = []
         if r["_vendor"]:
@@ -2149,7 +2153,7 @@ def run_transform(
             tags.append(event_promo_tag)
 
         # Seasonality tag (per style)
-        stg = style_season_map.get(_clean_style_key(r.get("_seasonality_key", "")))
+        stg = style_season_map.get(seasonality_key_fn(r.get("_seasonality_key", "")))
         if stg:
             tags.append(stg)
 
