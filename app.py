@@ -118,6 +118,9 @@ st.markdown("### 2️⃣ Upload des fichiers")
 supplier_file = st.file_uploader("Fichier fournisseur (.xlsx ou .csv)", type=["xlsx","csv","xls"])
 
 # --- Validation format fournisseur ---
+# Default: no seasonality mapping unless detected
+style_season_map = {}
+
 if supplier_file is not None:
     if supplier_file.name.lower().endswith(".xls"):
         st.error("Format de fichier non supporté : ce fichier est dans un ancien format Excel (.xls). Veuillez l’enregistrer au format .xlsx, puis le téléverser à nouveau.")
@@ -447,19 +450,26 @@ if supplier_file is not None:
             },
         )
 
-        # Use the widget live state; normalize to DataFrame
-        # Persist the edited dataframe (do NOT write to the widget key).
+        # Persist immediately: avoids having to type twice and keeps values across reruns
         st.session_state["seasonality_df"] = edited_df.copy()
 
-        # Build map from the edited dataframe (stable across reruns)
-        key_fn = _clean_style_number_base if key_col == "Style Number" else _clean_style_key
+        # Build mapping from the canonical dataframe (NOT from the widget internal state)
         style_season_map = {}
-        for _, r in edited_df.iterrows():
-            k = key_fn(r.get(key_col, ""))
-            v = str(r.get("Seasonality Tags", "")).strip()
-            if k and v:
-                style_season_map[k] = v
+        df_for_map = st.session_state.get("seasonality_df")
+        if isinstance(df_for_map, pd.DataFrame) and not df_for_map.empty:
+            for _, r in df_for_map.iterrows():
+                raw_key = r.get(key_col, "")
+                # UX uses the base before the first "-" for Style Number
+                if str(key_col).lower() == "style number":
+                    k = _clean_style_number_base(raw_key)
+                else:
+                    k = _clean_style_key(raw_key)
+                v = str(r.get("Seasonality Tags", "")).strip()
+                if k and v:
+                    style_season_map[k] = v
+    else:
         st.info("Aucun champ 'Style Name' ou 'Style Number' détecté dans le fichier. Seasonality ignorée.")
+
 
 # 🔹 Projet pilote : pas de sélection de marque
 brand_choice = ""
