@@ -148,7 +148,8 @@ SUPPLIERS = {
 }
 
 st.markdown("### 1️⃣ Sélection du fournisseur")
-supplier_name = st.selectbox("Choisir le fournisseur", sorted(SUPPLIERS.keys(), key=lambda x: x.lower()))
+supplier_options = [""] + sorted(SUPPLIERS.keys(), key=lambda x: x.lower())
+supplier_name = st.selectbox("Choisir le fournisseur", supplier_options)
 
 st.markdown("### 2️⃣ Upload des fichiers")
 supplier_file = st.file_uploader("Fichier fournisseur (.xlsx ou .csv)", type=["xlsx","csv","xls"])
@@ -505,7 +506,7 @@ brand_choice = ""
 generate = st.button(
     "Générer le fichier Shopify",
     type="secondary",
-    disabled=not (supplier_file and help_file),
+    disabled=not (supplier_name and supplier_file and help_file),
 )
 
 if generate:
