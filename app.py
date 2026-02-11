@@ -492,7 +492,7 @@ if supplier_file is not None:
                 current_df = edited_df
         style_season_map = {}
         for _, r in current_df.iterrows():
-            k = _clean_style_key(r.get(key_col, ""))
+            k = (_clean_style_number_base(r.get(key_col, "")) if "style number" in str(key_col).lower() else _clean_style_key(r.get(key_col, "")))
             v = str(r.get("Seasonality Tags", "")).strip()
             if k and v:
                 style_season_map[k] = v
