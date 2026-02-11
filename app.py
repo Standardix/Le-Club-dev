@@ -145,76 +145,12 @@ SUPPLIERS = {
     "veloToze": run_abc,
     "Watrbodl": run_abc,
     "Xact Nutrition": run_abc,
-
-
 }
 
-TAG_MAPPING_VENDORS: list[str] = [
-    "Aesop",
-    "Alba Optics",
-    "ARC",
-    "Balmoral",
-    "Bandit",
-    "Books",
-    "Burgh",
-    "Cadence",
-    "Café du Cycliste",
-    "Ciele",
-    "Daysaver",
-    "District Vision",
-    "DUSK",
-    "Endorf",
-    "Fingerscrossed",
-    "Hammerhead",
-    "Hermanos Koumori",
-    "Human Essentials",
-    "Jason Markk",
-    "KASK",
-    "Ketone-IQ",
-    "Koa",
-    "KOO",
-    "Le Braquet",
-    "Look",
-    "MAAP",
-    "Maurten",
-    "Näak",
-    "Neatcleats",
-    "norda",
-    "Oakley",
-    "Pas Normal Studios",
-    "PB Swiss",
-    "Post Carry Co.",
-    "QUOC",
-    "Rapha",
-    "Salt & Stone",
-    "Satisfy",
-    "Silca",
-    "Skratch Labs",
-    "Soar",
-    "Sweet Protection",
-    "Thule",
-    "tons",
-    "Tracksmith",
-    "Upika",
-    "Veloskin",
-    "veloToze",
-    "Watrbodl",
-    "Xact Nutrition",
-]
+st.markdown("### 1️⃣ Sélection du fournisseur")
+supplier_name = st.selectbox("Choisir le fournisseur", sorted(SUPPLIERS.keys(), key=lambda x: x.lower()))
 
-
-
-
-st.markdown("### 1️⃣ Upload des fichiers")
-help_file = st.file_uploader("Help data (.xlsx)", type=["xlsx"])
-
-st.markdown("### 2️⃣ Sélection du fournisseur")
-
-# Vendors additionnels (hard codés) issus de l’onglet "Tag Mapping" (colonne A)
-_supplier_options = sorted(set(SUPPLIERS.keys()).union(TAG_MAPPING_VENDORS), key=lambda x: x.lower())
-supplier_name = st.selectbox("Choisir le fournisseur", _supplier_options)
-
-st.markdown("### 3️⃣ Upload des fichiers")
+st.markdown("### 2️⃣ Upload des fichiers")
 supplier_file = st.file_uploader("Fichier fournisseur (.xlsx ou .csv)", type=["xlsx","csv","xls"])
 
 # --- Validation format fournisseur ---
@@ -223,8 +159,11 @@ if supplier_file is not None:
         st.error("Format de fichier non supporté : ce fichier est dans un ancien format Excel (.xls). Veuillez l’enregistrer au format .xlsx, puis le téléverser à nouveau.")
         st.stop()
 
+help_file = st.file_uploader("Help data (.xlsx)", type=["xlsx"])
+
+
 existing_shopify_file = st.file_uploader("Fichier de produits existant dans Shopify (.xlsx)", type=["xlsx"])
-st.markdown("### 4️⃣ Tags")
+st.markdown("### 3️⃣ Tags")
 
 event_promo_tag = st.selectbox(
     "Event/Promotion Related",
@@ -575,7 +514,7 @@ if generate:
     progress = st.progress(0)
 
     try:
-        transform_fn = SUPPLIERS.get(supplier_name, run_abc)
+        transform_fn = SUPPLIERS[supplier_name]
 
         status.info("Préparation des fichiers…")
         progress.progress(10)
