@@ -244,7 +244,7 @@ def _extract_unique_style_rows(file_bytes: bytes, supplier_name: str = "", file_
     # Prefer explicit style-number fields (avoid generic "Style" which can match a style-name field in some files)
     style_number_candidates = [
         "Style NO", "Style No", "STYLE NO", "style no",
-        "Style Number", "Style Num", "Style #", "style number", "style #",
+        "Style Number", "Style Num", "Style #", "style number", "style #", "style_number",
         "Style Code", "style code",
     ]
     style_name_candidates = [
@@ -434,7 +434,8 @@ if supplier_file is not None:
             tmp["Seasonality Tags"] = ""
             st.session_state["seasonality_df"] = tmp
 
-        edited_df = st.data_editor(
+        with st.form("seasonality_form", clear_on_submit=False):
+            edited_df = st.data_editor(
             st.session_state["seasonality_df"],
             key="seasonality_editor",
             use_container_width=True,
@@ -448,19 +449,23 @@ if supplier_file is not None:
                     required=False,
                 ),
             },
-        )
+            )
+            apply_seasonality = st.form_submit_button("Appliquer les tags de saison")
 
-        # Use the returned edited_df (it contains the latest keystroke) and persist it.
-        # NOTE: st.session_state['seasonality_editor'] can lag by one rerun, which caused users to type twice.
-        current_df = edited_df if isinstance(edited_df, pd.DataFrame) else pd.DataFrame(edited_df)
-        st.session_state["seasonality_df"] = current_df
+            # NOTE: Le formulaire évite le rerun à chaque frappe (écran gris).
+            # Les valeurs sont appliquées seulement au clic sur le bouton.
+            if apply_seasonality:
+                current_df = edited_df if isinstance(edited_df, pd.DataFrame) else pd.DataFrame(edited_df)
+                st.session_state["seasonality_df"] = current_df
+            else:
+                current_df = st.session_state["seasonality_df"]
 
-        style_season_map = {}
-        for _, r in current_df.iterrows():
-            k = _clean_style_key(r.get(key_col, ""))
-            v = str(r.get("Seasonality Tags", "")).strip()
-            if k and v:
-                style_season_map[k] = v
+            style_season_map = {}
+            for _, r in current_df.iterrows():
+                k = _clean_style_key(r.get(key_col, ""))
+                v = str(r.get("Seasonality Tags", "")).strip()
+                if k and v:
+                    style_season_map[k] = v
     else:
         st.info("Aucun champ 'Style Name' ou 'Style Number' détecté dans le fichier. Seasonality ignorée.")
 
