@@ -550,7 +550,7 @@ def _clean_style_number_base(v) -> str:
     if not s:
         return ""
     # keep only what is before the first "-" (UX behavior)
-    s = s.split("-", 1)[0].strip()
+    s = re.split(r"[-_]", s, maxsplit=1)[0].strip()
     return s
 
 
@@ -2166,7 +2166,7 @@ def run_transform(
     # -----------------------------------------------------
     # Seasonality key (to apply Seasonality Tags per style)
     # -----------------------------------------------------
-    style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "Style No", "Style NO", "STYLE NO", "style no", "style_no", "style_number", "Style#", "style number", "style #", "Style"])
+    style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "Style No", "Style NO", "STYLE NO", "style no", "style_no", "Style#", "style number", "style #", "Style"])
     style_name_col = _first_existing_col(sup, ["Style Name", "style name",
             "style_name", "STYLE_NAME", "Product Name", "Name"])
     sup["_seasonality_key"] = ""
