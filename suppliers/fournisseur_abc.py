@@ -2225,7 +2225,17 @@ def run_transform(
             tags.append(event_promo_tag)
 
         # Seasonality tag (per style)
-        stg = style_season_map.get(_clean_style_number_base(r.get("_seasonality_key", "")))
+        # Primary key comes from the supplier Style Number/Name detection.
+        season_key = _clean_style_number_base(r.get("_seasonality_key", ""))
+        stg = style_season_map.get(season_key)
+
+        # Fallback: some suppliers don't expose a clean Style Number column,
+        # but the base style code is still present in Variant SKU (e.g. 'MB0206AR-4880' -> 'MB0206AR').
+        if not stg:
+            sku_base = _clean_style_number_base(str(r.get("_variant_sku", "")).split("-", 1)[0])
+            if sku_base:
+                stg = style_season_map.get(sku_base)
+
         if stg:
             tags.append(stg)
 
