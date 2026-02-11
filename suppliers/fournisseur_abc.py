@@ -2196,8 +2196,18 @@ def run_transform(
     style_name_col = _first_existing_col(sup, ["Style Name", "style name",
             "style_name", "STYLE_NAME", "Product Name", "Name"])
     sup["_seasonality_key"] = ""
+    def _clean_style_number_base_local(v) -> str:
+        """
+        Seasonality: keep only what is BEFORE the first hyphen.
+        Example: 11000-FA-SAB -> 11000
+        """
+        s = _clean_style_key(v)
+        if not s:
+            return ""
+        return s.split("-", 1)[0].strip()
+
     if style_num_col is not None:
-        sup["_seasonality_key"] = _series_str_clean(sup[style_num_col]).map(_clean_style_key)
+        sup["_seasonality_key"] = _series_str_clean(sup[style_num_col]).map(_clean_style_number_base_local)
     elif style_name_col is not None:
         sup["_seasonality_key"] = _series_str_clean(sup[style_name_col]).map(_clean_style_key)
 
