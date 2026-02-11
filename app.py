@@ -54,6 +54,19 @@ st.markdown(
         box-shadow: none !important;
         outline: none !important;
     }
+
+    /* --- Multiselect chips: use app blue (avoid red which signals errors) --- */
+    div[data-baseweb="tag"] {
+        background-color: #e7f0fb !important;
+        color: #2f5f8f !important;
+        border: 1px solid #cfe0f5 !important;
+    }
+    div[data-baseweb="tag"] span {
+        color: #2f5f8f !important;
+    }
+    div[data-baseweb="tag"] svg {
+        fill: #2f5f8f !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -95,63 +108,59 @@ with st.expander("📘 Documentation"):
 
 
 SUPPLIERS = {
-    "Aesop": run_abc,
-    "Alba Optics": run_abc,
-    "ARC": run_abc,
     "Balmoral": run_abc,
     "Bandit": run_abc,
-    "Books": run_abc,
-    "Burgh": run_abc,
-    "Cadence": run_abc,
     "Café du Cycliste": run_abc,
     "Ciele": run_abc,
-    "Daysaver": run_abc,
     "District Vision": run_abc,
-    "DUSK": run_abc,
-    "Endorf": run_abc,
     "Fingerscrossed": run_abc,
-    "Hammerhead": run_abc,
-    "Hermanos Koumori": run_abc,
-    "Human Essentials": run_abc,
-    "Jason Markk": run_abc,
-    "KASK": run_abc,
-    "Ketone-IQ": run_abc,
-    "Koa": run_abc,
-    "KOO": run_abc,
-    "Le Braquet": run_abc,
-    "Look": run_abc,
     "MAAP": run_abc,
-    "Maurten": run_abc,
-    "Näak": run_abc,
-    "Neatcleats": run_abc,
     "norda": run_abc,
-    "Oakley": run_abc,
     "Pas Normal Studios": run_abc,
-    "PB Swiss": run_abc,
-    "Post Carry Co.": run_abc,
-    "QUOC": run_abc,
     "Rapha": run_abc,
-    "Salt & Stone": run_abc,
-    "Satisfy": run_abc,
-    "Silca": run_abc,
-    "Skratch Labs": run_abc,
     "Soar": run_abc,
-    "Sweet Protection": run_abc,
-    "Thule": run_abc,
-    "tons": run_abc,
     "Tracksmith": run_abc,
-    "Upika": run_abc,
-    "Veloskin": run_abc,
-    "veloToze": run_abc,
-    "Watrbodl": run_abc,
-    "Xact Nutrition": run_abc,
+    "Satisfy": run_abc,
+
 }
 
-st.markdown("### 1️⃣ Sélection du fournisseur")
-supplier_options = [""] + sorted(SUPPLIERS.keys(), key=lambda x: x.lower())
-supplier_name = st.selectbox("Choisir le fournisseur", supplier_options)
+def _read_tag_mapping_vendors(help_bytes: bytes) -> list[str]:
+    """Read Help Data -> 'Tag Mapping' sheet column A and return unique vendor names."""
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(help_bytes), data_only=True)
+    except Exception:
+        return []
+    if "Tag Mapping" not in wb.sheetnames:
+        return []
+    ws = wb["Tag Mapping"]
+    vendors: list[str] = []
+    seen = set()
+    for r in range(2, ws.max_row + 1):
+        v = ws.cell(row=r, column=1).value
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s or s.lower() == "nan":
+            continue
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        vendors.append(s)
+    return vendors
 
-st.markdown("### 2️⃣ Upload des fichiers")
+
+st.markdown("### 1️⃣ Upload des fichiers")
+help_file = st.file_uploader("Help data (.xlsx)", type=["xlsx"])
+
+st.markdown("### 2️⃣ Sélection du fournisseur")
+
+# Ajout des vendors provenant du Help Data -> onglet "Tag Mapping" (colonne A)
+_extra_vendors = _read_tag_mapping_vendors(help_file.getvalue()) if help_file is not None else []
+_supplier_options = sorted(set(SUPPLIERS.keys()).union(_extra_vendors), key=lambda x: x.lower())
+supplier_name = st.selectbox("Choisir le fournisseur", _supplier_options)
+
+st.markdown("### 3️⃣ Upload des fichiers")
 supplier_file = st.file_uploader("Fichier fournisseur (.xlsx ou .csv)", type=["xlsx","csv","xls"])
 
 # --- Validation format fournisseur ---
@@ -160,11 +169,8 @@ if supplier_file is not None:
         st.error("Format de fichier non supporté : ce fichier est dans un ancien format Excel (.xls). Veuillez l’enregistrer au format .xlsx, puis le téléverser à nouveau.")
         st.stop()
 
-help_file = st.file_uploader("Help data (.xlsx)", type=["xlsx"])
-
-
 existing_shopify_file = st.file_uploader("Fichier de produits existant dans Shopify (.xlsx)", type=["xlsx"])
-st.markdown("### 3️⃣ Tags")
+st.markdown("### 4️⃣ Tags")
 
 event_promo_tag = st.selectbox(
     "Event/Promotion Related",
@@ -491,9 +497,40 @@ if supplier_file is not None:
                 current_df = pd.DataFrame(current_df)
             except Exception:
                 current_df = edited_df
+
+        # --- Collage rapide (Seasonality) : section droite seulement ---
+        with st.expander("Collage rapide (Seasonality)"):
+            _spacer, _right = st.columns([2, 3])
+            with _right:
+                fill_value = st.text_input("Remplir avec", value="", key="seasonality_fill_value")
+
+                if key_col in current_df.columns:
+                    options = sorted(current_df[key_col].astype(str).dropna().unique().tolist(), key=lambda x: str(x).lower())
+                else:
+                    options = []
+                selected_styles = st.multiselect(
+                    "Styles à remplir",
+                    options=options,
+                    default=[],
+                    key="seasonality_fill_styles",
+                )
+
+                if st.button("Appliquer aux styles sélectionnés", key="seasonality_fill_apply"):
+                    if not fill_value.strip() or not selected_styles:
+                        st.warning("Sélectionne au moins un style et indique une valeur de tag.")
+                    else:
+                        df2 = current_df.copy()
+                        mask = df2[key_col].astype(str).isin([str(x) for x in selected_styles])
+                        df2.loc[mask, "Seasonality Tags"] = fill_value.strip()
+
+                        # Keep both the source df and the widget state in sync
+                        st.session_state["seasonality_df"] = df2
+                        st.session_state["seasonality_editor"] = df2
+                        st.success("Saisonality Tags appliqué.")
+
         style_season_map = {}
         for _, r in current_df.iterrows():
-            k = (_clean_style_number_base(r.get(key_col, "")) if "style number" in str(key_col).lower() else _clean_style_key(r.get(key_col, "")))
+            k = _clean_style_key(r.get(key_col, ""))
             v = str(r.get("Seasonality Tags", "")).strip()
             if k and v:
                 style_season_map[k] = v
@@ -506,7 +543,7 @@ brand_choice = ""
 generate = st.button(
     "Générer le fichier Shopify",
     type="secondary",
-    disabled=not (supplier_name and supplier_file and help_file),
+    disabled=not (supplier_file and help_file),
 )
 
 if generate:
@@ -515,7 +552,7 @@ if generate:
     progress = st.progress(0)
 
     try:
-        transform_fn = SUPPLIERS[supplier_name]
+        transform_fn = SUPPLIERS.get(supplier_name, run_abc)
 
         status.info("Préparation des fichiers…")
         progress.progress(10)
