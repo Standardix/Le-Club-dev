@@ -450,15 +450,9 @@ if supplier_file is not None:
             },
         )
 
-        # Use the widget live state; normalize to DataFrame
-        current_df = st.session_state.get("seasonality_editor", edited_df)
-        if not isinstance(current_df, pd.DataFrame):
-            try:
-                current_df = pd.DataFrame(current_df)
-            except Exception:
-                current_df = edited_df
-        # Persist edits so users do NOT need to type twice (Streamlit reruns on each edit).
-        # IMPORTANT: we update our own state key (seasonality_df), not the widget key, to avoid StreamlitAPIException.
+        # Use the returned edited_df (it contains the latest keystroke) and persist it.
+        # NOTE: st.session_state['seasonality_editor'] can lag by one rerun, which caused users to type twice.
+        current_df = edited_df if isinstance(edited_df, pd.DataFrame) else pd.DataFrame(edited_df)
         st.session_state["seasonality_df"] = current_df
 
         style_season_map = {}
