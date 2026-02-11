@@ -138,13 +138,7 @@ event_promo_tag = st.selectbox(
     index=0,
 )
 
-# 🔹 Projet pilote : pas de sélection de marque (on garde la variable pour l'API fournisseur)
-brand_choice = ""
-
-
 style_season_map: dict[str, str] = {}
-
-generate_clicked = False  # unified submit trigger
 
 def _clean_style_key(v) -> str:
     s = " ".join(str(v or "").strip().split())
@@ -160,7 +154,8 @@ def _clean_style_number_base(v) -> str:
     s = _clean_style_key(v)
     if not s:
         return ""
-    return s.split("-", 1)[0].strip()
+    s = re.split(r"[-_]", s, maxsplit=1)[0].strip()
+    return s
 
 def _first_existing_col(cols: list[str], candidates: list[str]) -> str | None:
     """
@@ -364,6 +359,12 @@ def _extract_unique_style_rows(file_bytes: bytes, supplier_name: str = "", file_
         out = agg
 
 
+        # EXTRA DEDUPE: collapse variants (ex: MAAP _BLAK/_WHIT or 11000-FA-SAB) to a base Style Number
+        out["Style Number"] = out["Style Number"].astype(str).map(_clean_style_number_base)
+        # After base-normalization, re-aggregate Style Name to avoid duplicates in the UX table
+        agg2 = out.groupby("Style Number")["Style Name"].apply(mode_nonempty).reset_index()
+        out = agg2
+
 
     cols = []
     if "Style Name" in out.columns:
@@ -440,44 +441,50 @@ if supplier_file is not None:
             tmp["Seasonality Tags"] = ""
             st.session_state["seasonality_df"] = tmp
 
-        with st.form("generation_form", clear_on_submit=False):
-            edited_df = st.data_editor(
-                st.session_state["seasonality_df"],
-                key="seasonality_editor",
-                use_container_width=True,
-                hide_index=True,
-                num_rows="fixed",
-                column_config={
-                    "Style Name": st.column_config.TextColumn(disabled=True),
-                    "Style Number": st.column_config.TextColumn(disabled=True),
-                    "Seasonality Tags": st.column_config.TextColumn(
-                        help="Champ libre (ex: spring-summer, fall-winter, core, etc.)",
-                        required=False,
-                    ),
-                },
-            )
+        # Seasonality editor (no per-keystroke rerun): we keep the editor state,
+        # and we "commit" it when the user clicks **Générer le fichier Shopify** (single action).
+        edited_df = st.data_editor(
+            st.session_state["seasonality_df"],
+            key="seasonality_editor",
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+            column_config={
+                "Style Name": st.column_config.TextColumn(disabled=True),
+                "Style Number": st.column_config.TextColumn(disabled=True),
+                "Seasonality Tags": st.column_config.TextColumn(
+                    help="Champ libre (ex: spring-summer, fall-winter, core, etc.)",
+                    required=False,
+                ),
+            },
+        )
 
-            # ✅ Un seul clic: le submit du formulaire = génération.
-            generate_clicked = st.form_submit_button(
-                "Générer le fichier Shopify",
-                disabled=not (supplier_file and help_file),
-            )
+        # Keep latest visible edits in session (this avoids the 'type twice' issue)
+        if isinstance(edited_df, pd.DataFrame):
+            st.session_state["seasonality_df"] = edited_df
 
-        # Appliquer automatiquement les tags de saison AU MOMENT de générer
-        current_df = st.session_state.get("seasonality_df")
-        if generate_clicked:
-            current_df = edited_df if isinstance(edited_df, pd.DataFrame) else pd.DataFrame(edited_df)
-            st.session_state["seasonality_df"] = current_df
+        current_df = st.session_state["seasonality_df"]
 
         style_season_map = {}
-        if current_df is not None:
-            for _, r in current_df.iterrows():
-                k = _clean_style_key(r.get(key_col, ""))
-                v = str(r.get("Seasonality Tags", "")).strip()
-                if k and v:
-                    style_season_map[k] = v
+        for _, r in current_df.iterrows():
+            k = _clean_style_key(r.get(key_col, ""))
+            v = str(r.get("Seasonality Tags", "")).strip()
+            if k and v:
+                style_season_map[k] = v
 
-if generate_clicked:
+    else:
+        st.info("Aucun champ 'Style Name' ou 'Style Number' détecté dans le fichier. Seasonality ignorée.")
+
+# 🔹 Projet pilote : pas de sélection de marque
+brand_choice = ""
+
+generate = st.button(
+    "Générer le fichier Shopify",
+    type="secondary",
+    disabled=not (supplier_file and help_file),
+)
+
+if generate:
     st.markdown("### Génération en cours")
     status = st.empty()
     progress = st.progress(0)
@@ -505,7 +512,7 @@ if generate_clicked:
                 existing_shopify_xlsx_bytes=(existing_shopify_file.getvalue() if existing_shopify_file is not None else None),
                 vendor_name=supplier_name,
                 brand_choice=brand_choice,  # toujours vide pour le pilote
-                event_promo_tag=event_promo_tag,
+                            event_promo_tag=event_promo_tag,
                 style_season_map=style_season_map,
             )
 
