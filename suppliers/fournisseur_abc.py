@@ -2167,7 +2167,11 @@ def run_transform(
         s = _norm(t)
         if not s:
             return False
+        # invalid placeholders
         if "?" in s:
+            return False
+        # treat "aucun" (any casing) as invalid / needs validation
+        if re.search(r"aucun", s, flags=re.IGNORECASE):
             return False
         return len(s.strip()) >= 3
 
@@ -2185,6 +2189,10 @@ def run_transform(
     # Seasonality key (to apply Seasonality Tags per style)
     # -----------------------------------------------------
     style_num_col = _first_existing_col(sup, ["Style Number", "Style Num", "Style #", "style number", "style #", "Style"])
+    # If "Style" was also used as the Description column, it is NOT a reliable seasonality key.
+    # In that case, prefer Style Name/Style Number columns instead.
+    if style_num_col is not None and 'desc_col' in locals() and style_num_col == desc_col:
+        style_num_col = None
     style_name_col = _first_existing_col(sup, ["Style Name", "style name",
             "style_name", "STYLE_NAME", "Product Name", "Name"])
     sup["_seasonality_key"] = ""
