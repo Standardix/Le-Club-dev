@@ -2475,15 +2475,12 @@ def run_transform(
     # ---------------------------------------------------------
     # Composition -> Metafield: my_fields.product_features
     # ---------------------------------------------------------
-    # If a column named 'composition' / 'fabric composition' exists, map it to product_features.
+    # If a column named 'composition' exists, map it to product_features.
     composition_col = _find_col(
         sup.columns,
         [
             "Composition",
-            "Fabric Composition",
             "Material Composition",
-            "Fabric composition",
-            "fabric composition",
         ],
     )
 
