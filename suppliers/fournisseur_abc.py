@@ -497,6 +497,28 @@ def _remove_size_from_handle(handle: str) -> str:
     return h
 
 
+
+
+def _remove_color_from_handle(handle: str, color_in: str) -> str:
+    """Remove trailing color slug from handle (theme.siblings must NEVER include color)."""
+    if not handle:
+        return ""
+    h = str(handle).strip()
+    c = _strip_reg_for_handle(color_in or "")
+    c = _norm(c)
+    if not c:
+        return h
+    # Match slug construction used in _make_handle (remove apostrophes, dots)
+    raw_c = c.replace("’", "").replace("'", "").replace(".", "")
+    color_slug = slugify(raw_c)
+    if not color_slug:
+        return h
+    suffix = "-" + color_slug
+    if h.lower().endswith(suffix.lower()):
+        return h[: -len(suffix)]
+    return h
+
+
 def _strip_gender_prefix_size(v: str) -> str:
     s = _norm(v)
     if not s:
@@ -2159,7 +2181,7 @@ def run_transform(
     sup["_handle"] = sup.apply(_make_handle, axis=1).apply(_remove_size_from_handle)
 
     # Siblings follow handle
-    sup["_siblings"] = sup["_handle"]
+    sup["_siblings"] = sup.apply(lambda r: _remove_color_from_handle(r.get("_handle",""), r.get("_color_in","")), axis=1)
 
 
     # Tags (keep standardized color/gender tags)
@@ -2409,7 +2431,7 @@ def run_transform(
     sup["_google_cat_id"] = sup["_desc_raw"].apply(lambda t: _best_match_id(t, google_cat_rows))
 
     # Siblings
-    sup["_siblings"] = sup["_handle"]
+    sup["_siblings"] = sup.apply(lambda r: _remove_color_from_handle(r.get("_handle",""), r.get("_color_in","")), axis=1)
 
             # SEO Title & SEO Description rules (aligned with Title rules)
     # 1) Vendor + Gender ('s if Men/Women) + Description + " - " + Color (NON-standardized)
