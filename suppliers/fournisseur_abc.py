@@ -2487,7 +2487,7 @@ def run_transform(
     # Fallback: check normalized keys for odd headers
     if composition_col is None:
         for c in list(sup.columns):
-            if _colkey(c) in ("composition", "fabriccomposition", "materialcomposition"):
+            if _colkey(c) in ("composition", "materialcomposition"):
                 composition_col = c
                 break
 
