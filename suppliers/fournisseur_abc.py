@@ -2476,20 +2476,14 @@ def run_transform(
     # Composition -> Metafield: my_fields.product_features
     # ---------------------------------------------------------
     # If a column named 'composition' exists, map it to product_features.
-    composition_col = _find_col(
-        sup.columns,
-        [
-            "Composition",
-            "Material Composition",
-        ],
-    )
+    # IMPORTANT: Exact-match only (no partial "contains") to avoid matching "Fabric Composition".
+    _norm_cols = {_colkey(c): c for c in sup.columns}
 
-    # Fallback: check normalized keys for odd headers
-    if composition_col is None:
-        for c in list(sup.columns):
-            if _colkey(c) in ("composition", "materialcomposition"):
-                composition_col = c
-                break
+    composition_col = None
+    for k in ("composition", "materialcomposition"):
+        if k in _norm_cols:
+            composition_col = _norm_cols[k]
+            break
 
     if composition_col is not None:
         sup["_product_features"] = _series_str_clean(sup[composition_col]).map(_sanitize_text_like_html)
