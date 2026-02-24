@@ -2854,14 +2854,14 @@ def run_transform(
 
     buffer = _apply_yellow_for_empty(buffer, "products", yellow_if_empty_cols)
     buffer = _apply_yellow_for_empty(buffer, "do not import", yellow_if_empty_cols)
-    # Red font for Title when it contains "?" or "/" (needs manual review)
+    # Red font for Title when it contains "?" (needs manual review)
     title_warn_cols = ["Title", "SEO Title"]
 
     def _rows_title_warn(df_slice: pd.DataFrame) -> list[int]:
         if "Title" not in df_slice.columns:
             return []
         s = _series_str_clean(df_slice["Title"])
-        mask = s.str.contains(r"[\?/]", regex=True)
+        mask = s.str.contains(r"\?", regex=True)
         return [i for i, v in enumerate(mask.tolist()) if v]
 
     buffer = _apply_red_font_for_rows_cols(buffer, "products", _rows_title_warn(products_df), title_warn_cols)
@@ -2926,8 +2926,8 @@ def run_transform(
 # Header notes (Excel comments) to explain red formatting / validations
     header_notes = {
         "Handle": "ROUGE = Le handle existe déjà dans le fichier d’inventaire fourni.",
-        "Title": "ROUGE = Le titre comporte un des deux caractères suivants: ? ou /.",
-        "SEO Title": "ROUGE = Le titre comporte un des deux caractères suivants: ? ou /.",
+        "Title": "ROUGE = Le titre comporte le caractère suivant: ?.",
+        "SEO Title": "ROUGE = Le titre comporte le caractère suivant: ?.",
         "Tags": "ROUGE = Vérifiez les tags Seasonal et les tags issus du Tag Mapping (col E vide/?/AUCUN/<3).",
         "Metafield: my_fields.colour [single_line_text_field]": "ROUGE = Les couleurs ne sont pas présentes dans le mapping (Help Data).",
         "Metafield: mm-google-shopping.color": "ROUGE = Les couleurs ne sont pas présentes dans le mapping (Help Data).",
