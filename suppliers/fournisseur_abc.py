@@ -1433,6 +1433,11 @@ def run_transform(
                 df_csv = _read_supplier_csv(io.BytesIO(file_bytes), file_name)
             except Exception as e:
                 raise ValueError(f"Impossible de lire le CSV fournisseur: {e}")
+            # Keep provenance for supplier-specific rules (safe extra column)
+            try:
+                df_csv["_source_file"] = str(file_name or "")
+            except Exception:
+                pass
             return df_csv
 
         bio = io.BytesIO(file_bytes)
@@ -2106,8 +2111,30 @@ def run_transform(
     sup["_handle"] = sup.apply(_make_handle, axis=1).apply(_remove_size_from_handle)
 
     # Custom Product Type: match using multiple fields (description + title + optional source product type)
-    # This ensures keywords like Gilet/Bibs/Long Bibs/Bidon/Baselayer are detected even if not present in DESCRIPTION.
-    sup["_product_type"] = sup["_desc_raw"].apply(lambda t: _best_match_product_type(t, product_types))
+    # This ensures keywords are detected even if not present in DESCRIPTION.
+    if vendor_key in ("ciele",):
+        def _infer_ciele_product_type(row) -> str:
+            t = " ".join([
+                str(row.get("_title", "")),
+                str(row.get("_desc_raw", "")),
+                str(row.get("_source_file", "")),
+                str(row.get("_source_sheet", "")),
+            ])
+            tl = t.lower()
+            # 1) Headwear file/products: always treat as caps (casquettes)
+            if "headwear" in tl:
+                return "Caps"
+            # 2) Caps keywords (Ciele uses names like "GOCap" without space)
+            if ("gocap" in tl) or re.search(r"\bcap(s)?\b", tl) or any(k in tl for k in ["trucker", "bucket", "beanie", "visor"]):
+                return "Caps"
+            # 3) Shorts must win over "singlet" mentions found in some shorts descriptions
+            if ("icnshort" in tl) or re.search(r"\bshorts?\b", tl):
+                return "Shorts"
+            return _best_match_product_type(t, product_types)
+
+        sup["_product_type"] = sup.apply(_infer_ciele_product_type, axis=1)
+    else:
+        sup["_product_type"] = sup["_desc_raw"].apply(lambda t: _best_match_product_type(t, product_types))
 
     # Optional: use a source product type column from supplier file if present
     product_type_src_col = _first_existing_col(sup, ["Product Type", "product type", "Type", "Category", "Product category", "Product Category"])
