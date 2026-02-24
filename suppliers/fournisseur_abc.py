@@ -1177,6 +1177,12 @@ def _best_match_product_type(text: str, product_types: list[str]) -> str:
         best = ""
         best_len = 0
         for pt in product_types:
+            # Special-case: avoid false positives for "Shoe Covers" when text contains
+            # words like "shoes" and "cover" far apart (e.g., "helping cover expenses").
+            # Only match Shoe Covers when the phrase "shoe cover(s)" is explicitly present.
+            if isinstance(pt, str) and pt.strip().lower() in {"shoe covers", "shoe cover"}:
+                if not re.search(r"\bshoe\s+covers?\b", str(t), flags=re.IGNORECASE):
+                    continue
             pset = _wordset_loose(pt)
             if pset and pset.issubset(tset):
                 if len(pset) > best_len:
