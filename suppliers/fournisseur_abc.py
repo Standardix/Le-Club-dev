@@ -1986,31 +1986,72 @@ def run_transform(
         if col.lower() in bt.lower():
             return bt
         return f"{bt} - {col}".strip()
-
-    sup["_title"] = [
-        _append_color_if_needed(bt, ct)
-        for bt, ct in zip(base_title.tolist(), sup["_color_title"].astype(str).tolist())
-    ]
-    # Remove sizes from Title (ex: " - M", "(L)", "size XL")
-    sup["_title"] = sup["_title"].astype(str).map(remove_size)
-    sup["_title"] = sup["_title"].astype(str).str.replace(r"\s{2,}", " ", regex=True).str.strip()
-
-    # Max 200 chars (truncate)
-    sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
-    
-    # De-dupe gender words in Title (ex: "Women's Women's ...")
-    def _dedupe_gender_phrase(txt: str) -> str:
-        t = str(txt or "").strip()
-        if not t:
+    # -----------------------------------------------------
+    # Title building
+    # -----------------------------------------------------
+    # Special supplier rule: NORDA
+    # Norda titles already contain the gender marker (M/W) and we must keep their naming convention:
+    #   <MODEL> - <W/M> - <DESCRIPTOR>
+    # We DO NOT apply the generic "Women's / Men's" conversion and we never append color for norda.
+    if vendor_key in ("norda",):
+        def _norda_gender_code(g: str) -> str:
+            gg = _norm(g).lower().replace("’", "'").strip()
+            if gg in ("women", "womens", "women's", "female", "femme", "femmes"):
+                return "W"
+            if gg in ("men", "mens", "men's", "male", "homme", "hommes"):
+                return "M"
             return ""
-        # collapse duplicates like "Women's Women's", "Women Women", etc.
-        t = re.sub(r"(?i)\b(women\'?s|women)\b\s+\b(women\'?s|women)\b", r"\1", t).strip()
-        t = re.sub(r"(?i)\b(men\'?s|men)\b\s+\b(men\'?s|men)\b", r"\1", t).strip()
-        t = re.sub(r"\s{2,}", " ", t).strip()
-        return t
 
-    sup["_title"] = sup["_title"].astype(str).map(_dedupe_gender_phrase)
+        def _norda_title_row(r) -> str:
+            # Use the cleaned description used for titles (already stripped of gender words/tokens)
+            src = r.get("_desc_title_norm") or r.get("_title_name_raw") or r.get("_desc_raw") or ""
+            src = _strip_gender_tokens(_norm(src))
+            src = re.sub(r"(?i)^(men|women|unisex)(\'s)?\s+", "", src).strip()
 
+            if not src:
+                return ""
+
+            parts = src.split()
+            model = parts[0].strip()
+            rest = " ".join(parts[1:]).strip()
+
+            code = _norda_gender_code(r.get("_gender_std", ""))
+
+            if rest:
+                rest_disp = _title_case_preserve_registered(rest)
+                if code:
+                    return f"{model} - {code} - {rest_disp}".strip()
+                return f"{model} - {rest_disp}".strip()
+
+            # If no descriptor, keep model (and code if present)
+            return f"{model} - {code}".strip(" -") if code else model
+
+        sup["_title"] = sup.apply(_norda_title_row, axis=1).astype(str).str.strip()
+        sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
+    else:
+        sup["_title"] = [
+            _append_color_if_needed(bt, ct)
+            for bt, ct in zip(base_title.tolist(), sup["_color_title"].astype(str).tolist())
+        ]
+        # Remove sizes from Title (ex: " - M", "(L)", "size XL")
+        sup["_title"] = sup["_title"].astype(str).map(remove_size)
+        sup["_title"] = sup["_title"].astype(str).str.replace(r"\s{2,}", " ", regex=True).str.strip()
+
+        # Max 200 chars (truncate)
+        sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
+
+        # De-dupe gender words in Title (ex: "Women's Women's ...")
+        def _dedupe_gender_phrase(txt: str) -> str:
+            t = str(txt or "").strip()
+            if not t:
+                return ""
+            # collapse duplicates like "Women's Women's", "Women Women", etc.
+            t = re.sub(r"(?i)\b(women\'?s|women)\b\s+\b(women\'?s|women)\b", r"\1", t).strip()
+            t = re.sub(r"(?i)\b(men\'?s|men)\b\s+\b(men\'?s|men)\b", r"\1", t).strip()
+            t = re.sub(r"\s{2,}", " ", t).strip()
+            return t
+
+        sup["_title"] = sup["_title"].astype(str).map(_dedupe_gender_phrase)
 # Handle: Vendor + Gender + Description + Color (color NON-standardized)
     def _make_handle(r):
         # When description is long and moved to Body (HTML), build handle from Style Name/Name (same rule as Title)
@@ -2174,14 +2215,52 @@ def run_transform(
     # Rebuild Title with corrected gender prefix (and keep all existing rules)
     base_title = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
 
-    sup["_title"] = [
-        _append_color_if_needed(bt, ct)
-        for bt, ct in zip(base_title.tolist(), sup["_color_title"].astype(str).tolist())
-    ]
-    sup["_title"] = sup["_title"].astype(str).map(remove_size)
-    sup["_title"] = sup["_title"].astype(str).map(_dedupe_gender_phrase)
-    sup["_title"] = sup["_title"].astype(str).str.replace(r"\s{2,}", " ", regex=True).str.strip()
-    sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
+        # Rebuild Title with corrected gender prefix (and keep all existing rules)
+    # Special supplier rule: NORDA
+    if vendor_key in ("norda",):
+        def _norda_gender_code_final(g: str) -> str:
+            gg = _norm(g).lower().replace("’", "'").strip()
+            if gg in ("women", "womens", "women's", "female", "femme", "femmes"):
+                return "W"
+            if gg in ("men", "mens", "men's", "male", "homme", "hommes"):
+                return "M"
+            return ""
+
+        def _norda_title_row_final(r) -> str:
+            src = r.get("_desc_title_norm") or r.get("_title_name_raw") or r.get("_desc_raw") or ""
+            src = _strip_gender_tokens(_norm(src))
+            src = re.sub(r"(?i)^(men|women|unisex)(\'s)?\s+", "", src).strip()
+
+            if not src:
+                return ""
+
+            parts = src.split()
+            model = parts[0].strip()
+            rest = " ".join(parts[1:]).strip()
+
+            code = _norda_gender_code_final(r.get("_gender_final", ""))
+
+            if rest:
+                rest_disp = _title_case_preserve_registered(rest)
+                if code:
+                    return f"{model} - {code} - {rest_disp}".strip()
+                return f"{model} - {rest_disp}".strip()
+
+            return f"{model} - {code}".strip(" -") if code else model
+
+        sup["_title"] = sup.apply(_norda_title_row_final, axis=1).astype(str).str.strip()
+        sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
+    else:
+        base_title = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
+
+        sup["_title"] = [
+            _append_color_if_needed(bt, ct)
+            for bt, ct in zip(base_title.tolist(), sup["_color_title"].astype(str).tolist())
+        ]
+        sup["_title"] = sup["_title"].astype(str).map(remove_size)
+        sup["_title"] = sup["_title"].astype(str).map(_dedupe_gender_phrase)
+        sup["_title"] = sup["_title"].astype(str).str.replace(r"\s{2,}", " ", regex=True).str.strip()
+        sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
 
     # Rebuild Handle so it uses _gender_final (mens/womens) and de-dupes parts
     sup["_handle"] = sup.apply(_make_handle, axis=1).apply(_remove_size_from_handle)
