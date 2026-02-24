@@ -1433,11 +1433,6 @@ def run_transform(
                 df_csv = _read_supplier_csv(io.BytesIO(file_bytes), file_name)
             except Exception as e:
                 raise ValueError(f"Impossible de lire le CSV fournisseur: {e}")
-            # Keep provenance for supplier-specific rules (safe extra column)
-            try:
-                df_csv["_source_file"] = str(file_name or "")
-            except Exception:
-                pass
             return df_csv
 
         bio = io.BytesIO(file_bytes)
@@ -1542,6 +1537,10 @@ def run_transform(
         return pd.concat(dfs, ignore_index=True, sort=False)
 
     sup = _read_supplier_multi_sheet(supplier_xlsx_bytes, supplier_filename).copy()
+
+    # --- Drop completely empty rows (robust for CSVs where blanks are read as empty strings) ---
+    sup = sup.replace(r"^\s*$", np.nan, regex=True).dropna(how="all")
+
 
     # Satisfy: remove Totals line (often contains zeros that should not become products)
     if vendor_key in ("satisfy",):
@@ -2111,28 +2110,29 @@ def run_transform(
     sup["_handle"] = sup.apply(_make_handle, axis=1).apply(_remove_size_from_handle)
 
     # Custom Product Type: match using multiple fields (description + title + optional source product type)
-    # This ensures keywords are detected even if not present in DESCRIPTION.
+    # This ensures keywords like Gilet/Bibs/Long Bibs/Bidon/Baselayer are detected even if not present in DESCRIPTION.
+    
     if vendor_key in ("ciele",):
-        def _infer_ciele_product_type(row) -> str:
-            t = " ".join([
-                str(row.get("_title", "")),
-                str(row.get("_desc_raw", "")),
-                str(row.get("_source_file", "")),
-                str(row.get("_source_sheet", "")),
-            ])
-            tl = t.lower()
-            # 1) Headwear file/products: always treat as caps (casquettes)
-            if "headwear" in tl:
-                return "Caps"
-            # 2) Caps keywords (Ciele uses names like "GOCap" without space)
-            if ("gocap" in tl) or re.search(r"\bcap(s)?\b", tl) or any(k in tl for k in ["trucker", "bucket", "beanie", "visor"]):
-                return "Caps"
-            # 3) Shorts must win over "singlet" mentions found in some shorts descriptions
-            if ("icnshort" in tl) or re.search(r"\bshorts?\b", tl):
-                return "Shorts"
-            return _best_match_product_type(t, product_types)
-
-        sup["_product_type"] = sup.apply(_infer_ciele_product_type, axis=1)
+        # Ciele toolkits can include many trailing empty rows; ensure we've filtered them.
+        # Headwear file: force Caps/Headwear detection.
+        fn_l = (supplier_filename or "").lower()
+        if "headwear" in fn_l:
+            sup["_product_type"] = "Caps"
+        else:
+            def _ciele_pt(row) -> str:
+                title = str(row.get("Title", "") or "")
+                desc = str(row.get("Description", "") or "")
+                txt = f"{title} {desc}"
+                tset = txt.lower()
+                # Prefer Shorts over Singlet when both words appear in marketing copy.
+                if re.search(r"\bshorts?\b", tset) or "icnshort" in tset:
+                    return "Shorts"
+                # Caps/Headwear keywords
+                if re.search(r"\b(cap|caps|gocap|trucker|bucket|beanie|visor)\b", tset):
+                    return "Caps"
+                # Otherwise fall back to generic matcher.
+                return _best_match_product_type(txt, product_types) or "Apparel"
+            sup["_product_type"] = sup.apply(_ciele_pt, axis=1)
     else:
         sup["_product_type"] = sup["_desc_raw"].apply(lambda t: _best_match_product_type(t, product_types))
 
