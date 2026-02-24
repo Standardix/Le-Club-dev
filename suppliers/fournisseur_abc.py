@@ -1654,7 +1654,7 @@ def run_transform(
     upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
     ean_col = _first_existing_col(sup, ["EAN", "EAN Code", "ean", "ean code"])
     origin_col = _first_existing_col(sup, ["Country of origin", "Country of Origin", "Country Of Origin", "Country Code", "Origin", "Manufacturing Country", "COO", "country of origin", "country of origin ", "country code", "origin", "manufacturing country", "coo"])
-    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code", "commodity hs", "commodity hts", "Commodity HS", "Commodity HTS", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "custom tariff code (no dots)", "custom tariff code", "tariff code"])
+    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code", "commodity hs", "commodity hts", "Commodity HS", "Commodity HTS", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "custom tariff code (no dots)", "custom tariff code", "tariff code", "Harmonisation Code", "Harmonization Code"])
     extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
     msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)"])
     landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
@@ -2475,16 +2475,30 @@ def run_transform(
     # ---------------------------------------------------------
     # Composition -> Metafield: my_fields.product_features
     # ---------------------------------------------------------
-    # If a column named 'composition' (any case) exists, map it to product_features.
-    composition_col = None
-    for c in list(sup.columns):
-        if _colkey(c) == "composition":
-            composition_col = c
-            break
+    # If a column named 'composition' / 'fabric composition' exists, map it to product_features.
+    composition_col = _find_col(
+        sup.columns,
+        [
+            "Composition",
+            "Fabric Composition",
+            "Material Composition",
+            "Fabric composition",
+            "fabric composition",
+        ],
+    )
+
+    # Fallback: check normalized keys for odd headers
+    if composition_col is None:
+        for c in list(sup.columns):
+            if _colkey(c) in ("composition", "fabriccomposition", "materialcomposition"):
+                composition_col = c
+                break
+
     if composition_col is not None:
         sup["_product_features"] = _series_str_clean(sup[composition_col]).map(_sanitize_text_like_html)
     else:
         sup["_product_features"] = ""
+
 
 
     
