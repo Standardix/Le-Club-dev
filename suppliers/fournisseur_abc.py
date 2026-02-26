@@ -1779,7 +1779,19 @@ def run_transform(
     # Base description (keep both a normalized version and the original source text)
     sup["_desc_source"] = _series_str_clean(sup[desc_col])  # preserve original (length, punctuation, line breaks)
     sup["_desc_raw"] = sup["_desc_source"].map(_norm)
+
+    # Normalized description used for Title/SEO (kept separate from _desc_raw for safe later transforms)
+    sup["_desc_title_norm"] = sup["_desc_raw"].copy()
+
     sup["_desc_seo"] = sup["_desc_raw"].apply(_convert_r_to_registered)
+
+    # -----------------------------------------------------
+    # Long description helper fields must be defined BEFORE _desc_handle is computed
+    # -----------------------------------------------------
+    title_name_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style"])
+    sup["_title_name_raw"] = _series_str_clean(sup[title_name_col]).map(_norm) if title_name_col else ""
+    sup["_desc_is_long"] = sup["_desc_source"].apply(lambda x: len(str(x)) > 200)
+
     sup["_desc_handle"] = sup.apply(lambda r: _strip_reg_for_handle(r["_title_name_raw"]) if r.get("_desc_is_long") and r.get("_title_name_raw") else _strip_reg_for_handle(r["_desc_raw"]), axis=1)
 
     # -----------------------------------------------------
@@ -1787,10 +1799,6 @@ def run_transform(
     # If the SOURCE description text is > 200 chars, move it to Body (HTML)
     # and build Title from Style Name / Name instead of the long description.
     # -----------------------------------------------------
-    title_name_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style"])
-    sup["_title_name_raw"] = _series_str_clean(sup[title_name_col]).map(_norm) if title_name_col else ""
-
-    sup["_desc_is_long"] = sup["_desc_source"].apply(lambda x: len(str(x)) > 200)
 
     # Put the original description in Body (HTML) when long (not the normalized one)
     sup["_body_html"] = sup.apply(lambda r: str(r["_desc_source"]).strip() if r["_desc_is_long"] else "", axis=1)
@@ -1913,7 +1921,6 @@ def run_transform(
         return t
 
     sup["_desc_title_norm"] = _series_str_clean(sup["_desc_title_norm"]).map(_clean_desc_for_display)
-    sup["_title_name_raw"] = _series_str_clean(sup["_title_name_raw"]).map(_clean_desc_for_display)
 
     sup["_gender_title"] = _series_str_clean(sup["_gender_std"]).map(_gender_for_title)
     sup["_desc_title"] = _series_str_clean(sup["_desc_title_norm"]).map(_title_case_preserve_registered)
