@@ -1886,10 +1886,10 @@ def run_transform(
         g = str(g or '').strip().lower()
 
         # Only Women allowed
-        if g in ('women', 'woman', 'womens', 'female', 'ladies'):
+        if g in ('women','woman','womens','female','ladies'):
             return "Women's"
 
-        # Block Men and Unisex explicitly
+        # Never inject Men or Unisex
         return ""
 
     def _clean_desc_for_display(s: str) -> str:
@@ -2859,59 +2859,54 @@ def run_transform(
             return r.get(c, "") if c else ""
         handle_col_out = "Handle" if "Handle" in out.columns else None
 
-        mask_existing = []
-        for _, r in out.iterrows():
-            vendor = _getcol(r, vendor_col) or vendor_name
-            sku = _getcol(r, sku_col)
-            upc = _getcol(r, upc_col)
-            handle_val = _getcol(r, handle_col_out)
-            handle_norm = _norm_handle(handle_val) if handle_col_out else ""
-            is_existing = (handle_norm in existing_handles_set) if handle_norm else False
-            if not is_existing:
-                is_existing = _row_is_existing(str(vendor), str(sku), str(upc), existing_key_sets)
-            mask_existing.append(is_existing)
+        # STRICT DO NOT IMPORT (Business rule only)
+        def _clean_val(x):
+            return str(x or '').strip()
 
-        mask_existing = pd.Series(mask_existing, index=out.index)
+        def _make_import_key(row):
+            sku = _clean_val(row.get('Variant SKU',''))
+            upc = _clean_val(row.get('Variant Barcode',''))
+            vendor = _clean_val(row.get('Vendor',''))
 
-        
-    # =====================================================
-    # STRICT DO NOT IMPORT LOGIC (BUSINESS RULE ONLY)
-    # =====================================================
-    existing_handles_set, existing_key_sets = _build_existing_shopify_index(existing_shopify_xlsx_bytes)
+            if sku and upc:
+                return f"{sku}|{upc}"
+            if upc:
+                return upc
+            if vendor and sku:
+                return f"{vendor}|{sku}"
+            return ''
 
-    def _clean_val(x):
-        return str(x or "").strip()
+        out['_import_key'] = out.apply(_make_import_key, axis=1)
 
-    def _make_import_key(row):
-        sku = _clean_val(row.get("Variant SKU", ""))
-        upc = _clean_val(row.get("Variant Barcode", ""))
-        vendor = _clean_val(row.get("Vendor", ""))
+        existing_sku_upc = set()
+        existing_upc = set()
+        existing_vendor_sku = set()
 
-        # 1) SKU + UPC
-        if sku and upc:
-            return f"{sku}|{upc}"
+        if existing_shopify_xlsx_bytes is not None:
+            df_existing = pd.read_excel(io.BytesIO(existing_shopify_xlsx_bytes))
+            for _, r in df_existing.iterrows():
+                sku = _clean_val(r.get('Variant SKU',''))
+                upc = _clean_val(r.get('Variant Barcode',''))
+                vendor = _clean_val(r.get('Vendor',''))
+                if sku and upc:
+                    existing_sku_upc.add(f"{sku}|{upc}")
+                if upc:
+                    existing_upc.add(upc)
+                if vendor and sku:
+                    existing_vendor_sku.add(f"{vendor}|{sku}")
 
-        # 2) UPC only
-        if upc:
-            return upc
+        def _exists(key):
+            if not key:
+                return False
+            if '|' in key:
+                if key in existing_sku_upc or key in existing_vendor_sku:
+                    return True
+            if key in existing_upc:
+                return True
+            return False
 
-        # 3) Vendor + SKU
-        if vendor and sku:
-            return f"{vendor}|{sku}"
-
-        # 4) If none found → no key → do NOT send to do_not_import
-        return ""
-
-    out["_import_key"] = out.apply(_make_import_key, axis=1)
-
-    existing_keys = set(existing_key_sets)
-
-    mask_existing = (
-        out["_import_key"].astype(str).str.strip().ne("") &
-        out["_import_key"].isin(existing_keys)
-    )
-
-    products_df = out.loc[~mask_existing].copy()
+        mask_existing = out['_import_key'].apply(_exists)
+        products_df = out.loc[~mask_existing].copy()
         do_not_import_df = out.loc[mask_existing].copy()
 
         products_df[SHOPIFY_OUTPUT_COLUMNS].to_excel(writer, index=False, sheet_name="products")
