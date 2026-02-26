@@ -1882,15 +1882,22 @@ def run_transform(
     # e) Truncate to max 200 chars
     # -----------------------------------------------------
     
-    def _gender_for_title(g: str) -> str:
-        """Title prefix rule:
-        - Men -> Men's
-        - Women -> Women's
-        - Non genré / Unisex / empty -> no prefix
-        """
-        gg = _norm(g)
-        if not gg:
-            return ""
+    
+# =====================================================
+# GENDER OVERRIDE RULE
+# Only 'Women' is allowed to appear in titles/SEO.
+# 'Men' and 'Unisex' are NEVER injected.
+# =====================================================
+
+def _gender_for_title(g):
+    g = str(g or "").strip().lower()
+
+    if g in ("women", "woman", "womens", "female", "ladies"):
+        return "Women's"
+
+    # Explicitly block Men and Unisex
+    return ""
+
         ggl = gg.lower().replace("’", "'").strip()
 
         # Women
