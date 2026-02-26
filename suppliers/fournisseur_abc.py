@@ -1882,89 +1882,16 @@ def run_transform(
     # e) Truncate to max 200 chars
     # -----------------------------------------------------
     
-    
-# =====================================================
-# GENDER OVERRIDE RULE
-# Only 'Women' is allowed to appear in titles/SEO.
-# 'Men' and 'Unisex' are NEVER injected.
-# =====================================================
+    def _gender_for_title(g):
+        g = str(g or '').strip().lower()
 
-def _gender_for_title(g):
-    g = str(g or "").strip().lower()
-
-    if g in ("women", "woman", "womens", "female", "ladies"):
-        return "Women's"
-
-    # Explicitly block Men and Unisex
-    return ""
-
-        ggl = gg.lower().replace("’", "'").strip()
-
-        # Women
-        if ggl in ("women", "womens", "women's", "female", "femme", "femmes"):
+        # Only Women allowed
+        if g in ('women', 'woman', 'womens', 'female', 'ladies'):
             return "Women's"
 
-        # Men
-        if ggl in ("men", "mens", "men's", "male", "homme", "hommes"):
-            return "Men's"
-
-        return ""
-        ggl = gg.lower().replace("’", "'")
-        # Accept common normalized forms (incl. already possessive)
-        if ggl in ("women", "womens", "women's", "female", "femme", "femmes"):
-            return "Women's"
+        # Block Men and Unisex explicitly
         return ""
 
-    # Column to use as the primary "name/description" source for Title.
-    # IMPORTANT: even when a column is selected, we still do row-level fallbacks
-    # (ex: MAAP has a Description column but many rows are empty -> fallback to Name per row).
-    title_desc_col = _first_existing_col_with_data(
-        sup,
-        [
-            "Description",
-            "Product Name",
-            "Title",
-            "Style",
-            "Style Name",
-            "Display Name",
-            "Online Display Name",
-            "Name",
-            "name",
-        ],
-    )
-
-    # Safeguard: if selected title column yields all-empty, fallback to Name/name.
-    if title_desc_col is not None:
-        _tmp = _series_str_clean(sup[title_desc_col]).str.strip()
-        if (_tmp.eq("").all()) and ("Name" in sup.columns or "name" in sup.columns):
-            title_desc_col = _first_existing_col_with_data(sup, ["Name", "name"])
-
-    # SATISFY: prefer supplier Name/name column for Title (same naming basis as handle/SEO title).
-    if vendor_key in ("satisfy",):
-        _s_name = _first_existing_col(sup, ["Name", "name"])
-        if _s_name:
-            title_desc_col = _s_name
-
-    # Build description text used for Title (normalized, row-wise fallbacks).
-    if title_desc_col is not None:
-        _desc_series = _series_str_clean(sup[title_desc_col]).map(_norm)
-    else:
-        _desc_series = _series_str_clean(sup["_desc_seo"]).map(_norm)
-
-    _name_series = _series_str_clean(sup.get("_title_name_raw", "")).map(_norm)
-
-    # Row-level fallback:
-    # - If original supplier description is long (>200 chars) we use Style Name/Name (already in _title_name_raw).
-    # - Else if the selected description cell is empty, fallback to Style Name/Name.
-    _desc_series = _desc_series.where(_desc_series.astype(str).str.strip().ne(""), _name_series)
-    if "_desc_is_long" in sup.columns:
-        mask_long = sup["_desc_is_long"] & _name_series.astype(str).str.strip().ne("")
-        _desc_series = _desc_series.where(~mask_long, _name_series)
-
-    sup["_desc_title_norm"] = _desc_series.apply(_convert_r_to_registered)
-# Clean description text used for Title/SEO fields:
-    # - remove embedded gender markers like -w- / -m-
-    # - remove leading Men/Women tokens to avoid duplicates with Gender prefix
     def _clean_desc_for_display(s: str) -> str:
         t = _norm(s)
         if not t:
