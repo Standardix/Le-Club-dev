@@ -1700,19 +1700,31 @@ def run_transform(
     name_hint_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style", "Description", "Display Name", "Online Display Name"])
     sku_hint_col = extid_col or product_col
     def _infer_gender_from_texts(name_val: str, sku_val: str) -> str:
-        # Look across name/description-like text + sku for gender signals
+        """Infer gender from supplier text + SKU-like fields.
+
+        Looks for:
+        - explicit SKU markers: -w- / -m- (with or without spaces)
+        - 'Women' / 'Men' words (incl. possessive)
+        - codes like W#### or M#### (prefix letter + digits)
+        """
         t = f"{_norm(name_val)} {_norm(sku_val)}".lower()
 
-        # Strong markers in SKUs like -w- / -m-
-        if re.search(r"-\s*w\s*-", t):
+        # Strong markers in SKUs like -w- / -m- (allow no spaces too)
+        if re.search(r"-\s*w\s*-", t) or re.search(r"-w-", t):
             return "Women"
-        if re.search(r"-\s*m\s*-", t):
+        if re.search(r"-\s*m\s*-", t) or re.search(r"-m-", t):
+            return "Men"
+
+        # Prefix code patterns like W1234 / M1234 (start or after a separator)
+        if re.search(r"(?<![a-z0-9])w(?=\d)", t):
+            return "Women"
+        if re.search(r"(?<![a-z0-9])m(?=\d)", t):
             return "Men"
 
         # Text markers (women/men, women's/men's)
-        if re.search(r"\bwomen\b|\bwomen's\b|\bwomens\b|\bfemale\b", t):
+        if re.search(r"\bwomen\b|\bwomen's\b|\bwomens\b|\bfemale\b|\bfemme\b", t):
             return "Women"
-        if re.search(r"\bmen\b|\bmen's\b|\bmens\b|\bmale\b", t):
+        if re.search(r"\bmen\b|\bmen's\b|\bmens\b|\bmale\b|\bhomme\b", t):
             return "Men"
         return ""
 
@@ -1883,81 +1895,14 @@ def run_transform(
     # -----------------------------------------------------
     
     def _gender_for_title(g: str) -> str:
-        """Title prefix rule:
-        - Men -> Men's
-        - Women -> Women's
-        - Non genré / Unisex / empty -> no prefix
+        """Return the gender prefix for display fields (Title / SEO Title).
+        Business rule: ONLY Women is allowed. Men/Unisex must NEVER be written.
         """
-        gg = _norm(g)
-        if not gg:
-            return ""
-        ggl = gg.lower().replace("’", "'").strip()
-
-        # Women
-        if ggl in ("women", "womens", "women's", "female", "femme", "femmes"):
-            return "Women's"
-
-        # Men
-        if ggl in ("men", "mens", "men's", "male", "homme", "hommes"):
-            return "Men's"
-
-        return ""
-        ggl = gg.lower().replace("’", "'")
-        # Accept common normalized forms (incl. already possessive)
-        if ggl in ("women", "womens", "women's", "female", "femme", "femmes"):
+        gg = str(g or "").strip().lower().replace("’", "'")
+        if gg in ("women", "woman", "womens", "women's", "female", "ladies", "femme", "femmes"):
             return "Women's"
         return ""
 
-    # Column to use as the primary "name/description" source for Title.
-    # IMPORTANT: even when a column is selected, we still do row-level fallbacks
-    # (ex: MAAP has a Description column but many rows are empty -> fallback to Name per row).
-    title_desc_col = _first_existing_col_with_data(
-        sup,
-        [
-            "Description",
-            "Product Name",
-            "Title",
-            "Style",
-            "Style Name",
-            "Display Name",
-            "Online Display Name",
-            "Name",
-            "name",
-        ],
-    )
-
-    # Safeguard: if selected title column yields all-empty, fallback to Name/name.
-    if title_desc_col is not None:
-        _tmp = _series_str_clean(sup[title_desc_col]).str.strip()
-        if (_tmp.eq("").all()) and ("Name" in sup.columns or "name" in sup.columns):
-            title_desc_col = _first_existing_col_with_data(sup, ["Name", "name"])
-
-    # SATISFY: prefer supplier Name/name column for Title (same naming basis as handle/SEO title).
-    if vendor_key in ("satisfy",):
-        _s_name = _first_existing_col(sup, ["Name", "name"])
-        if _s_name:
-            title_desc_col = _s_name
-
-    # Build description text used for Title (normalized, row-wise fallbacks).
-    if title_desc_col is not None:
-        _desc_series = _series_str_clean(sup[title_desc_col]).map(_norm)
-    else:
-        _desc_series = _series_str_clean(sup["_desc_seo"]).map(_norm)
-
-    _name_series = _series_str_clean(sup.get("_title_name_raw", "")).map(_norm)
-
-    # Row-level fallback:
-    # - If original supplier description is long (>200 chars) we use Style Name/Name (already in _title_name_raw).
-    # - Else if the selected description cell is empty, fallback to Style Name/Name.
-    _desc_series = _desc_series.where(_desc_series.astype(str).str.strip().ne(""), _name_series)
-    if "_desc_is_long" in sup.columns:
-        mask_long = sup["_desc_is_long"] & _name_series.astype(str).str.strip().ne("")
-        _desc_series = _desc_series.where(~mask_long, _name_series)
-
-    sup["_desc_title_norm"] = _desc_series.apply(_convert_r_to_registered)
-# Clean description text used for Title/SEO fields:
-    # - remove embedded gender markers like -w- / -m-
-    # - remove leading Men/Women tokens to avoid duplicates with Gender prefix
     def _clean_desc_for_display(s: str) -> str:
         t = _norm(s)
         if not t:
@@ -2067,16 +2012,10 @@ def run_transform(
 
         # Normalize gender for handle: mens / womens, blank for non-gendered
         def _gender_for_handle(g: str) -> str:
-            gg = _norm(g)
-            if not gg:
-                return ""
-            ggl = gg.lower().replace("’", "'").strip()
-            if ggl in ("non genré", "non-genré", "nongendre", "unisex", "uni sex"):
-                return ""
-            if ggl in ("women", "womens", "women's", "female", "femme", "femmes"):
+            """Return gender slug for Handle. ONLY womens is allowed; never mens/unisex."""
+            gg = _norm(g).lower().replace("’", "'").strip()
+            if gg in ("women", "womens", "women's", "female", "ladies", "femme", "femmes"):
                 return "womens"
-            if ggl in ("men", "mens", "men's", "male", "homme", "hommes"):
-                return "mens"
             return ""
 
         gender_handle = _gender_for_handle(r.get("_gender_final", ""))
