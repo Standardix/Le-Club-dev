@@ -2859,6 +2859,18 @@ def run_transform(
             return r.get(c, "") if c else ""
         handle_col_out = "Handle" if "Handle" in out.columns else None
 
+        mask_existing = []
+        for _, r in out.iterrows():
+            vendor = _getcol(r, vendor_col) or vendor_name
+            sku = _getcol(r, sku_col)
+            upc = _getcol(r, upc_col)
+            handle_val = _getcol(r, handle_col_out)
+            handle_norm = _norm_handle(handle_val) if handle_col_out else ""
+            is_existing = (handle_norm in existing_handles_set) if handle_norm else False
+            if not is_existing:
+                is_existing = _row_is_existing(str(vendor), str(sku), str(upc), existing_key_sets)
+            mask_existing.append(is_existing)
+
         # STRICT DO NOT IMPORT (Business rule only)
         def _clean_val(x):
             return str(x or '').strip()
@@ -2883,6 +2895,7 @@ def run_transform(
         existing_vendor_sku = set()
 
         if existing_shopify_xlsx_bytes is not None:
+            import io
             df_existing = pd.read_excel(io.BytesIO(existing_shopify_xlsx_bytes))
             for _, r in df_existing.iterrows():
                 sku = _clean_val(r.get('Variant SKU',''))
