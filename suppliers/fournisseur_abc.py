@@ -1882,16 +1882,82 @@ def run_transform(
     # e) Truncate to max 200 chars
     # -----------------------------------------------------
     
-    def _gender_for_title(g):
-        g = str(g or '').strip().lower()
+    def _gender_for_title(g: str) -> str:
+        """Title prefix rule:
+        - Men -> Men's
+        - Women -> Women's
+        - Non genré / Unisex / empty -> no prefix
+        """
+        gg = _norm(g)
+        if not gg:
+            return ""
+        ggl = gg.lower().replace("’", "'").strip()
 
-        # Only Women allowed
-        if g in ('women','woman','womens','female','ladies'):
+        # Women
+        if ggl in ("women", "womens", "women's", "female", "femme", "femmes"):
             return "Women's"
 
-        # Never inject Men or Unisex
+        # Men
+        if ggl in ("men", "mens", "men's", "male", "homme", "hommes"):
+            return "Men's"
+
+        return ""
+        ggl = gg.lower().replace("’", "'")
+        # Accept common normalized forms (incl. already possessive)
+        if ggl in ("women", "womens", "women's", "female", "femme", "femmes"):
+            return "Women's"
         return ""
 
+    # Column to use as the primary "name/description" source for Title.
+    # IMPORTANT: even when a column is selected, we still do row-level fallbacks
+    # (ex: MAAP has a Description column but many rows are empty -> fallback to Name per row).
+    title_desc_col = _first_existing_col_with_data(
+        sup,
+        [
+            "Description",
+            "Product Name",
+            "Title",
+            "Style",
+            "Style Name",
+            "Display Name",
+            "Online Display Name",
+            "Name",
+            "name",
+        ],
+    )
+
+    # Safeguard: if selected title column yields all-empty, fallback to Name/name.
+    if title_desc_col is not None:
+        _tmp = _series_str_clean(sup[title_desc_col]).str.strip()
+        if (_tmp.eq("").all()) and ("Name" in sup.columns or "name" in sup.columns):
+            title_desc_col = _first_existing_col_with_data(sup, ["Name", "name"])
+
+    # SATISFY: prefer supplier Name/name column for Title (same naming basis as handle/SEO title).
+    if vendor_key in ("satisfy",):
+        _s_name = _first_existing_col(sup, ["Name", "name"])
+        if _s_name:
+            title_desc_col = _s_name
+
+    # Build description text used for Title (normalized, row-wise fallbacks).
+    if title_desc_col is not None:
+        _desc_series = _series_str_clean(sup[title_desc_col]).map(_norm)
+    else:
+        _desc_series = _series_str_clean(sup["_desc_seo"]).map(_norm)
+
+    _name_series = _series_str_clean(sup.get("_title_name_raw", "")).map(_norm)
+
+    # Row-level fallback:
+    # - If original supplier description is long (>200 chars) we use Style Name/Name (already in _title_name_raw).
+    # - Else if the selected description cell is empty, fallback to Style Name/Name.
+    _desc_series = _desc_series.where(_desc_series.astype(str).str.strip().ne(""), _name_series)
+    if "_desc_is_long" in sup.columns:
+        mask_long = sup["_desc_is_long"] & _name_series.astype(str).str.strip().ne("")
+        _desc_series = _desc_series.where(~mask_long, _name_series)
+
+    sup["_desc_title_norm"] = _desc_series.apply(_convert_r_to_registered)
+# Clean description text used for Title/SEO fields:
+    # - remove embedded gender markers like -w- / -m-
+    # - remove leading Men/Women tokens to avoid duplicates with Gender prefix
     def _clean_desc_for_display(s: str) -> str:
         t = _norm(s)
         if not t:
@@ -2857,68 +2923,22 @@ def run_transform(
 
         def _getcol(r, c):
             return r.get(c, "") if c else ""
-        handle_col_out = "Handle" if "Handle" in out.columns else None
-
+                # NOTE: Handle is NOT used to determine "do not import".
+        # Matching is STRICTLY based on keys:
+        #   1) SKU + UPC  -> SKU|UPC
+        #   2) UPC only   -> UPC
+        #   3) Vendor+SKU -> Vendor|SKU
+        #   4) If none available -> NEVER sent to "do not import"
         mask_existing = []
         for _, r in out.iterrows():
             vendor = _getcol(r, vendor_col) or vendor_name
             sku = _getcol(r, sku_col)
             upc = _getcol(r, upc_col)
-            handle_val = _getcol(r, handle_col_out)
-            handle_norm = _norm_handle(handle_val) if handle_col_out else ""
-            is_existing = (handle_norm in existing_handles_set) if handle_norm else False
-            if not is_existing:
-                is_existing = _row_is_existing(str(vendor), str(sku), str(upc), existing_key_sets)
+            is_existing = _row_is_existing(str(vendor), str(sku), str(upc), existing_key_sets)
             mask_existing.append(is_existing)
 
-        # STRICT DO NOT IMPORT (Business rule only)
-        def _clean_val(x):
-            return str(x or '').strip()
+        mask_existing = pd.Series(mask_existing, index=out.index)
 
-        def _make_import_key(row):
-            sku = _clean_val(row.get('Variant SKU',''))
-            upc = _clean_val(row.get('Variant Barcode',''))
-            vendor = _clean_val(row.get('Vendor',''))
-
-            if sku and upc:
-                return f"{sku}|{upc}"
-            if upc:
-                return upc
-            if vendor and sku:
-                return f"{vendor}|{sku}"
-            return ''
-
-        out['_import_key'] = out.apply(_make_import_key, axis=1)
-
-        existing_sku_upc = set()
-        existing_upc = set()
-        existing_vendor_sku = set()
-
-        if existing_shopify_xlsx_bytes is not None:
-            import io
-            df_existing = pd.read_excel(io.BytesIO(existing_shopify_xlsx_bytes))
-            for _, r in df_existing.iterrows():
-                sku = _clean_val(r.get('Variant SKU',''))
-                upc = _clean_val(r.get('Variant Barcode',''))
-                vendor = _clean_val(r.get('Vendor',''))
-                if sku and upc:
-                    existing_sku_upc.add(f"{sku}|{upc}")
-                if upc:
-                    existing_upc.add(upc)
-                if vendor and sku:
-                    existing_vendor_sku.add(f"{vendor}|{sku}")
-
-        def _exists(key):
-            if not key:
-                return False
-            if '|' in key:
-                if key in existing_sku_upc or key in existing_vendor_sku:
-                    return True
-            if key in existing_upc:
-                return True
-            return False
-
-        mask_existing = out['_import_key'].apply(_exists)
         products_df = out.loc[~mask_existing].copy()
         do_not_import_df = out.loc[mask_existing].copy()
 
