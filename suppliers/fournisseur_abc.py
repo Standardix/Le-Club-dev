@@ -2939,7 +2939,45 @@ def run_transform(
 
         mask_existing = pd.Series(mask_existing, index=out.index)
 
-        products_df = out.loc[~mask_existing].copy()
+        
+    # =====================================================
+    # STRICT DO NOT IMPORT LOGIC (BUSINESS RULE ONLY)
+    # =====================================================
+    existing_handles_set, existing_key_sets = _build_existing_shopify_index(existing_shopify_xlsx_bytes)
+
+    def _clean_val(x):
+        return str(x or "").strip()
+
+    def _make_import_key(row):
+        sku = _clean_val(row.get("Variant SKU", ""))
+        upc = _clean_val(row.get("Variant Barcode", ""))
+        vendor = _clean_val(row.get("Vendor", ""))
+
+        # 1) SKU + UPC
+        if sku and upc:
+            return f"{sku}|{upc}"
+
+        # 2) UPC only
+        if upc:
+            return upc
+
+        # 3) Vendor + SKU
+        if vendor and sku:
+            return f"{vendor}|{sku}"
+
+        # 4) If none found → no key → do NOT send to do_not_import
+        return ""
+
+    out["_import_key"] = out.apply(_make_import_key, axis=1)
+
+    existing_keys = set(existing_key_sets)
+
+    mask_existing = (
+        out["_import_key"].astype(str).str.strip().ne("") &
+        out["_import_key"].isin(existing_keys)
+    )
+
+    products_df = out.loc[~mask_existing].copy()
         do_not_import_df = out.loc[mask_existing].copy()
 
         products_df[SHOPIFY_OUTPUT_COLUMNS].to_excel(writer, index=False, sheet_name="products")
