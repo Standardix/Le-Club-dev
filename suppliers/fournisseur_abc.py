@@ -120,15 +120,30 @@ def _scrub_nan_token_in_title(s: str) -> str:
 
 
 def _norm_upc(v) -> str:
-    """Normalize UPC/Barcode: keep digits only, drop trailing .0 from numeric."""
+    """Normalize UPC/Barcode for matching:
+    - keep digits only
+    - drop trailing .0 from numeric text
+    - pad to 12 digits when length <= 12 (preserve leading zeros)
+    - keep up to 16 digits for EAN/GTIN
+    """
     if v is None:
         return ""
     s = str(v).strip()
-    # drop .0 for floats represented as '123.0'
     s = re.sub(r"\.0$", "", s)
-    # keep digits only
-    s = re.sub(r"\D", "", s)
-    return s
+    digits = re.sub(r"\D", "", s)
+    if not digits:
+        return ""
+    # treat all-zero as empty
+    try:
+        if int(digits) == 0:
+            return ""
+    except Exception:
+        pass
+    if len(digits) <= 12:
+        return digits.zfill(12)
+    if len(digits) <= 16:
+        return digits
+    return digits[:16]
 
 
 
@@ -291,11 +306,12 @@ def _build_existing_shopify_index(existing_shopify_xlsx_bytes: bytes | None):
         upc = _norm_upc(r.get(upc_col, "")) if upc_col else ""
 
         # Priority order for keys
+        # Index multiple matching keys so we can match even when SKU is missing in incoming files.
+        if upc:
+            key_sets["upc"].add((upc,))
         if sku and upc:
             key_sets["sku_upc"].add((sku, upc))
-        elif upc:
-            key_sets["upc"].add((upc,))
-        elif vendor and sku:
+        if vendor and sku:
             key_sets["vendor_sku"].add((vendor, sku))
 
     return handles_set, key_sets
