@@ -1989,7 +1989,7 @@ def run_transform(
 
         def _norda_title_row(r) -> str:
             # Use the cleaned description used for titles (already stripped of gender words/tokens)
-            src = r.get("_desc_title_norm") or r.get("_title_name_raw") or r.get("_desc_raw") or ""
+            src = r.get("_title_name_raw") or r.get("_desc_title_norm") or r.get("_desc_raw") or ""
             src = _strip_gender_tokens(_norm(src))
             src = re.sub(r"(?i)^(men|women|unisex)(\'s)?\s+", "", src).strip()
 
@@ -2229,7 +2229,7 @@ def run_transform(
             return ""
 
         def _norda_title_row_final(r) -> str:
-            src = r.get("_desc_title_norm") or r.get("_title_name_raw") or r.get("_desc_raw") or ""
+            src = r.get("_title_name_raw") or r.get("_desc_title_norm") or r.get("_desc_raw") or ""
             src = _strip_gender_tokens(_norm(src))
             src = re.sub(r"(?i)^(men|women|unisex)(\'s)?\s+", "", src).strip()
 
