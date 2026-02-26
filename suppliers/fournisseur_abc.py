@@ -356,6 +356,35 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font
 
 
+
+def _to_dot_decimal_str(x) -> str:
+    """Force decimal separator to dot and return a STRING for Excel/Shopify.
+    - Empty/NaN/None -> '0'
+    - Numbers -> formatted with 2 decimals (keeps 114.99)
+    - Strings with comma -> comma replaced by dot
+    """
+    if x is None:
+        return "0"
+    try:
+        import math
+        if isinstance(x, float) and math.isnan(x):
+            return "0"
+    except Exception:
+        pass
+    s = str(x).strip()
+    if s == "" or s.lower() in ("nan", "none"):
+        return "0"
+    # normalize comma to dot
+    s = s.replace(",", ".")
+    # if looks numeric, format to 2 decimals (but keep integers as '0'??)
+    try:
+        v = float(s)
+        if v == 0:
+            return "0"
+        return f"{v:.2f}"
+    except Exception:
+        return s
+
 def _sanitize_nan(df):
     """Replace NaN / None with empty string for Shopify export."""
     return df.where(df.notna(), "")
@@ -2669,8 +2698,7 @@ def run_transform(
     out["Variant Inventory Tracker"] = "shopify"
     out["Variant Inventory Policy"] = "deny"
     out["Variant Fulfillment Service"] = "manual"
-    out["Variant Price"] = sup["_price"]
-
+    out["Variant Price"] = sup["_price"].apply(_to_dot_decimal_str)
     out["Variant Requires Shipping"] = True
     out["Variant Taxable"] = True
 
@@ -2682,7 +2710,7 @@ def run_transform(
     out["Metafield: my_fields.product_features [multi_line_text_field]"] = out["Metafield: my_fields.product_features [multi_line_text_field]"].map(_sanitize_text_like_html)
 
     out["Variant Weight Unit"] = "g"
-    out["Cost per item"] = sup["_cost"]
+    out["Cost per item"] = sup["_cost"].apply(_to_dot_decimal_str)
     out["Status"] = "draft"
 
     out["Metafield: my_fields.product_use_case [multi_line_text_field]"] = ""
