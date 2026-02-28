@@ -79,6 +79,21 @@ def remove_size(text):
     return t.strip()
 
 
+def _strip_trailing_dashes(text: str) -> str:
+    """Remove any trailing dash separators left after size removal (e.g., 'Off White -')."""
+    if text is None:
+        return ""
+    t = str(text)
+    # remove one or more trailing hyphen-like separators with surrounding spaces
+    t = re.sub(r"(?:\s*[-–—]\s*)+$", "", t)
+    # also remove trailing slashes just in case
+    t = re.sub(r"(?:\s*/\s*)+$", "", t)
+    # normalize spaces
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    return t
+
+
+
 
 
 def _strip_size_tokens(s: str) -> str:
@@ -2036,6 +2051,7 @@ def run_transform(
         ]
         # Remove sizes from Title (ex: " - M", "(L)", "size XL")
         sup["_title"] = sup["_title"].astype(str).map(remove_size)
+        sup["_title"] = sup["_title"].astype(str).map(_strip_trailing_dashes)
         sup["_title"] = sup["_title"].astype(str).str.replace(r"\s{2,}", " ", regex=True).str.strip()
 
         # Max 200 chars (truncate)
@@ -2276,6 +2292,7 @@ def run_transform(
             for bt, ct in zip(base_title.tolist(), sup["_color_title"].astype(str).tolist())
         ]
         sup["_title"] = sup["_title"].astype(str).map(remove_size)
+        sup["_title"] = sup["_title"].astype(str).map(_strip_trailing_dashes)
         sup["_title"] = sup["_title"].astype(str).map(_dedupe_gender_phrase)
         sup["_title"] = sup["_title"].astype(str).str.replace(r"\s{2,}", " ", regex=True).str.strip()
         sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
