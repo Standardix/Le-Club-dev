@@ -1,4 +1,12 @@
-from __future__ import annotations
+out["Title"] = (
+        out["Title"]
+        .astype(str)
+        .str.replace(r"(?i)\s*-\s*OS\b", "", regex=True)
+        .str.replace(r"(?i)\bOS\b", "", regex=True)
+        .str.replace(r"\s*-\s*$", "", regex=True)
+        .str.replace(r"\s{2,}", " ", regex=True)
+        .str.strip()
+    )from __future__ import annotations
 
 import re
 
