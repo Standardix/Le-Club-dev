@@ -2589,7 +2589,6 @@ def run_transform(
     sup["_seo_title"] = sup["_seo_title"].apply(_scrub_nan_token_in_title)
     
     sup["_seo_title"] = sup["_seo_title"].apply(_strip_size_tokens)
-    sup["Title"] = sup["Title"].apply(_strip_size_tokens)
 # SEO Description: RESTORE previous behavior
     # Prefix fixe + contenu marque (help data -> SEO Description Brand Part), sinon fallback générique
     def _seo_desc(r):
