@@ -2546,9 +2546,41 @@ def run_transform(
 
     sup["_size_comment"] = sup.apply(_size_comment, axis=1)
 
-    # Categories: match using DESCRIPTION (to catch LONG SLEEVE, TEE → tshirt)
-    sup["_shopify_cat_id"] = sup["_desc_raw"].apply(lambda t: _best_match_id(t, shopify_cat_rows))
-    sup["_google_cat_id"] = sup["_desc_raw"].apply(lambda t: _best_match_id(t, google_cat_rows))
+    # ---------------------------------------------------------
+    # Categories resolution (v31.2 improved logic)
+    # ---------------------------------------------------------
+    # PRIORITY:
+    # 1️⃣ Custom Product Type (sup["_product_type"])
+    # 2️⃣ Description (sup["_desc_raw"])
+    # 3️⃣ Title (sup["_title"])
+    # ---------------------------------------------------------
+    
+    def _resolve_category_id(row, cat_rows):
+        # 1️⃣ PRIORITY: Custom Product Type
+        pt = row.get("_product_type", "") or ""
+        if pt:
+            cid = _best_match_id(pt, cat_rows)
+            if cid:
+                return cid
+    
+        # 2️⃣ Fallback: Description
+        desc = row.get("_desc_raw", "") or ""
+        if desc:
+            cid = _best_match_id(desc, cat_rows)
+            if cid:
+                return cid
+    
+        # 3️⃣ Fallback: Title
+        title = row.get("_title", "") or ""
+        if title:
+            cid = _best_match_id(title, cat_rows)
+            if cid:
+                return cid
+    
+        return ""
+    
+    sup["_shopify_cat_id"] = sup.apply(lambda r: _resolve_category_id(r, shopify_cat_rows), axis=1)
+    sup["_google_cat_id"]  = sup.apply(lambda r: _resolve_category_id(r, google_cat_rows), axis=1)
 
     # Siblings
     sup["_siblings"] = sup.apply(lambda r: _remove_color_from_handle(r.get("_handle",""), r.get("_color_in","")), axis=1)
