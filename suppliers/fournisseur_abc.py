@@ -43,7 +43,7 @@ def map_custom_product_type(val: str) -> str:
     return val
 
 
-SIZE_REGEX = re.compile(r"""(\s*[-/]?\s*(?:size\s*)?\b(?:xxs|xs|s|m|l|xl|xxl|xxxl)\b)""", re.IGNORECASE)
+SIZE_REGEX = re.compile(r"""(\s*[-/]?\s*(?:size\s*)?\b(?:xxs|xs|s|m|l|xl|xxl|xxxl|os)\b)""", re.IGNORECASE)
 
 def _looks_like_size(v: str) -> bool:
     if v is None:
@@ -106,10 +106,10 @@ def _strip_size_tokens(s: str) -> str:
     out = s
 
     # Remove parenthesized sizes, e.g. "(M)" or "(size M)"
-    out = re.sub(r"(?i)\(\s*(?:size\s*)?(?:xxs|xs|s|m|l|xl|xxl|xxxl)\s*\)", "", out)
+    out = re.sub(r"(?i)\(\s*(?:size\s*)?(?:xxs|xs|s|m|l|xl|xxl|xxxl|os)\s*\)", "", out)
 
     # Remove size tokens only when preceded by a separator or whitespace (so we don't touch words like "Studios")
-    out = re.sub(r"(?i)(?:\s*[-/]\s*|\s+)(?:size\s*)?(?:xxs|xs|s|m|l|xl|xxl|xxxl)\b", "", out)
+    out = re.sub(r"(?i)(?:\s*[-/]\s*|\s+)(?:size\s*)?(?:xxs|xs|s|m|l|xl|xxl|xxxl|os)\b", "", out)
 
     # Cleanup leftover separators/spaces
     out = re.sub(r"\s{2,}", " ", out).strip()
@@ -2589,6 +2589,7 @@ def run_transform(
     sup["_seo_title"] = sup["_seo_title"].apply(_scrub_nan_token_in_title)
     
     sup["_seo_title"] = sup["_seo_title"].apply(_strip_size_tokens)
+    sup["Title"] = sup["Title"].apply(_strip_size_tokens)
 # SEO Description: RESTORE previous behavior
     # Prefix fixe + contenu marque (help data -> SEO Description Brand Part), sinon fallback générique
     def _seo_desc(r):
