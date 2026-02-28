@@ -2544,7 +2544,7 @@ def run_transform(
         # SEO Title: aligned with Title rules
     # Vendor + Gender ('s if Men/Women) + Description/Style Name + " - " + Color (NON-standardized)
     def _seo_base(r) -> str:
-        vendor = _title_case_preserve_registered(_norm(r.get("_vendor", "")))
+        vendor = str(r.get("_vendor", "") or "")
 
         # Gender prefix: Men's / Women's (blank if NON genré)
         g = _gender_for_title(_norm(r.get("_gender_final", "")))
@@ -2576,8 +2576,8 @@ def run_transform(
     # Prefix fixe + contenu marque (help data -> SEO Description Brand Part), sinon fallback générique
     def _seo_desc(r):
         prefix = f"Shop the {r['_seo_title']} with free worldwide shipping, and 30-day returns on leclub.cc. "
-        brand_name = _norm(r.get("_brand_choice") or r.get("_vendor"))
-        brand_disp = _title_case_preserve_registered(brand_name)
+        brand_name = str(r.get("_vendor", "") or "")
+        brand_disp = brand_name
 
         bkey = brand_name.strip().lower()
         if bkey and bkey in brand_desc_map:
