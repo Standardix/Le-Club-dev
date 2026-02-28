@@ -1,12 +1,4 @@
-out["Title"] = (
-        out["Title"]
-        .astype(str)
-        .str.replace(r"(?i)\s*-\s*OS\b", "", regex=True)
-        .str.replace(r"(?i)\bOS\b", "", regex=True)
-        .str.replace(r"\s*-\s*$", "", regex=True)
-        .str.replace(r"\s{2,}", " ", regex=True)
-        .str.strip()
-    )from __future__ import annotations
+from __future__ import annotations
 
 import re
 
@@ -105,12 +97,11 @@ def _strip_trailing_dashes(text: str) -> str:
 
 
 def _strip_size_tokens(s: str) -> str:
-    # Remove common size tokens including OS (One Size)
-    s = re.sub(r"\b(xs|s|m|l|xl|xxl|xxxl|os)\b", "", s, flags=re.I)
-    s = re.sub(r"\s*-\s*$", "", s)
-    s = re.sub(r"\s{2,}", " ", s)
-    return s.strip()
-
+    """Remove size tokens (XS/S/M/L/XL/XXL...) from SEO fields without removing letters inside words."""
+    if s is None:
+        return s
+    if not isinstance(s, str):
+        s = str(s)
 
     out = s
 
