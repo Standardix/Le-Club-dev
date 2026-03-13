@@ -869,6 +869,12 @@ def _read_2col_map(wb, sheet_candidates: list[str]) -> dict[str, str]:
         if not ra or ra.lower() == "nan":
             continue
         m[ra.lower()] = rb
+        # basic singular/plural fallbacks for French/English gender labels
+        lk = ra.lower()
+        if lk.endswith('s'):
+            m.setdefault(lk[:-1], rb)
+        else:
+            m.setdefault(lk + 's', rb)
     return m
 
 
@@ -1906,9 +1912,9 @@ def run_transform(
             return "Men"
 
         # Text markers (women/men, women's/men's)
-        if re.search(r"\bwomen\b|\bwomen's\b|\bwomens\b|\bfemale\b|\bfemme\b", t):
+        if re.search(r"\bwomen\b|\bwomen's\b|\bwomens\b|\bfemale\b|\bfemme\b|\bfemmes\b", t):
             return "Women"
-        if re.search(r"\bmen\b|\bmen's\b|\bmens\b|\bmale\b|\bhomme\b", t):
+        if re.search(r"\bmen\b|\bmen's\b|\bmens\b|\bmale\b|\bhomme\b|\bhommes\b", t):
             return "Men"
         return ""
 
@@ -2300,6 +2306,27 @@ def run_transform(
     # Final enforcement: always output canonical Product Types from Help Data
     sup["_product_type"] = sup["_product_type"].apply(_canon_product_type)
 
+    # Le Braquet files are French order forms. Add a targeted fallback so
+    # the main apparel families map to Help Data product types before the
+    # gendering logic runs.
+    if vendor_key in ("lebraquet",):
+        _lb_blob = _pt_blob.astype(str).str.lower()
+        sup.loc[
+            sup["_product_type"].astype(str).str.strip().eq("") & _lb_blob.str.contains(r"\bmaillot\b.*\bmanches\s+courtes?\b|\bmanches\s+courtes?\b.*\bmaillot\b", regex=True),
+            "_product_type",
+        ] = _canon_product_type("Jersey")
+        sup.loc[
+            sup["_product_type"].astype(str).str.strip().eq("") & _lb_blob.str.contains(r"\bmaillot\b.*\bmanches\s+longues?\b|\bmanches\s+longues?\b.*\bmaillot\b", regex=True),
+            "_product_type",
+        ] = _canon_product_type("Long Sleeve Jersey")
+        sup.loc[
+            sup["_product_type"].astype(str).str.strip().eq("") & _lb_blob.str.contains(r"\bcuissard\b.*\bbretelles\b|\bbretelles\b.*\bcuissard\b", regex=True),
+            "_product_type",
+        ] = _canon_product_type("Bib Shorts")
+        sup.loc[
+            sup["_product_type"].astype(str).str.strip().eq("") & _lb_blob.str.contains(r"\bchaussettes?\b|\bsocquettes?\b", regex=True),
+            "_product_type",
+        ] = _canon_product_type("Socks")
 
 
     # -----------------------------------------------------
