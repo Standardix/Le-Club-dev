@@ -336,6 +336,14 @@ def _read_le_braquet_xlsx(file_bytes: bytes) -> pd.DataFrame:
     for c in df.columns:
         df[c] = df[c].apply(lambda x: "" if x is None else x)
 
+    # Supplier-specific cleanup for visible text coming from the order form
+    for c in ["Gender", "Description", "Product Type", "Color", "SKU", "GTIN", "Size"]:
+        if c in df.columns:
+            if c == "Color":
+                df[c] = df[c].apply(_clean_color_label)
+            else:
+                df[c] = df[c].apply(_clean_supplier_display_text)
+
     df = df.loc[df["SKU"].astype(str).str.strip().ne("")].copy()
 
     # Keep only rows where an order quantity was actually entered.
@@ -607,6 +615,43 @@ def _sanitize_text_like_html(v) -> str:
     s = re.sub(r"[ \t\f\v]+", " ", s)
     # Clean up multiple newlines
     s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
+def _remove_triple_asterisks(v) -> str:
+    """Remove decorative *** markers while preserving the surrounding text."""
+    if v is None:
+        return ""
+    s = str(v)
+    s = re.sub(r"\*{3,}", " ", s)
+    s = re.sub(r"\s{2,}", " ", s)
+    return s.strip()
+
+def _clean_color_label(v) -> str:
+    """Clean supplier colour labels.
+
+    Rules:
+    - remove decorative *** markers
+    - remove 'Nouveauté' prefixes such as:
+      'NOUVEAUTÉ Bleu lavande', 'Nouveauté Couleur 1', etc.
+    - keep the actual colour name/value
+    """
+    s = _remove_triple_asterisks(v)
+    if not s:
+        return ""
+    s = s.replace("\r", " ").replace("\n", " ").strip()
+    # remove leading novelty markers only, keep the actual colour name/value
+    s = re.sub(r"(?i)^nouveaut[ée]\s*[-:/]?\s*", "", s).strip()
+    s = re.sub(r"\s{2,}", " ", s)
+    return s.strip()
+
+def _clean_supplier_display_text(v) -> str:
+    """General cleanup for supplier text fields shown in output."""
+    s = _remove_triple_asterisks(v)
+    if not s:
+        return ""
+    s = s.replace("\r", " ")
+    s = re.sub(r"\s{2,}", " ", s)
     return s.strip()
 
 def _strip_made_in(s: str) -> str:
@@ -1994,8 +2039,14 @@ def run_transform(
     sup["_body_html"] = sup.apply(lambda r: str(r["_desc_source"]).strip() if r["_desc_is_long"] else "", axis=1)
     # Clean HTML-ish artifacts in Body (HTML)
     sup["_body_html"] = sup["_body_html"].map(_sanitize_text_like_html)
+    sup["_body_html"] = sup["_body_html"].map(_clean_supplier_display_text)
+    sup["_desc_source"] = sup["_desc_source"].map(_clean_supplier_display_text)
+    sup["_desc_raw"] = sup["_desc_source"].map(_norm)
+    sup["_desc_title_norm"] = sup["_desc_raw"].copy()
+    if title_name_col:
+        sup["_title_name_raw"] = _series_str_clean(sup[title_name_col]).map(_clean_supplier_display_text).map(_norm)
     # Color / Size input
-    sup["_color_raw"] = _series_str_clean(sup[color_col]).map(_norm) if color_col else ""
+    sup["_color_raw"] = _series_str_clean(sup[color_col]).map(_clean_color_label).map(_norm) if color_col else ""
     sup["_size_raw"] = _series_str_clean(sup[size_col]).map(_norm) if size_col else ""
 
     # Fallback parse from description if missing
@@ -2009,7 +2060,9 @@ def run_transform(
     if vendor_key in ("pasnormalstudios", "pasnormalstudio"):
         sup.loc[sup["_color_in"].str.upper().isin(["OS", "ONE SIZE"]), "_color_in"] = ""
 
+    sup["_color_fb"] = sup["_color_fb"].map(_clean_color_label)
     sup.loc[sup["_color_in"].eq(""), "_color_in"] = sup["_color_fb"]
+    sup["_color_in"] = sup["_color_in"].map(_clean_color_label)
     # If "color" value is actually a size, clear it and fallback again
     sup.loc[sup["_color_in"].apply(_looks_like_size), "_color_in"] = ""
     sup.loc[sup["_color_in"].eq(""), "_color_in"] = sup["_color_fb"]
@@ -2115,7 +2168,7 @@ def run_transform(
 
     sup["_gender_title"] = _series_str_clean(sup["_gender_std"]).map(_gender_for_title)
     sup["_desc_title"] = _series_str_clean(sup["_desc_title_norm"]).map(_title_case_preserve_registered)
-    sup["_color_title"] = _series_str_clean(sup["_color_in"]).map(_title_case_preserve_registered)
+    sup["_color_title"] = _series_str_clean(sup["_color_in"]).map(_clean_color_label).map(_title_case_preserve_registered)
 
     # Avoid duplicating colour in Title if it is already present in the description text
     _desc_l = sup["_desc_title_norm"].astype(str).str.lower()
@@ -2174,6 +2227,7 @@ def run_transform(
             return f"{model} - {code}".strip(" -") if code else model
 
         sup["_title"] = sup.apply(_norda_title_row, axis=1).astype(str).str.strip()
+        sup["_title"] = sup["_title"].astype(str).map(_clean_supplier_display_text)
         sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
     else:
         sup["_title"] = [
@@ -2186,6 +2240,7 @@ def run_transform(
         sup["_title"] = sup["_title"].astype(str).str.replace(r"\s{2,}", " ", regex=True).str.strip()
 
         # Max 200 chars (truncate)
+        sup["_title"] = sup["_title"].astype(str).map(_clean_supplier_display_text)
         sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
 
         # De-dupe gender words in Title (ex: "Women's Women's ...")
@@ -2435,6 +2490,7 @@ def run_transform(
             return f"{model} - {code}".strip(" -") if code else model
 
         sup["_title"] = sup.apply(_norda_title_row_final, axis=1).astype(str).str.strip()
+        sup["_title"] = sup["_title"].astype(str).map(_clean_supplier_display_text)
         sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
     else:
         base_title = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
@@ -2447,6 +2503,7 @@ def run_transform(
         sup["_title"] = sup["_title"].astype(str).map(_strip_trailing_dashes)
         sup["_title"] = sup["_title"].astype(str).map(_dedupe_gender_phrase)
         sup["_title"] = sup["_title"].astype(str).str.replace(r"\s{2,}", " ", regex=True).str.strip()
+        sup["_title"] = sup["_title"].astype(str).map(_clean_supplier_display_text)
         sup["_title"] = sup["_title"].astype(str).map(lambda x: str(x)[:200].rstrip())
 
     # Rebuild Handle so it uses _gender_final (mens/womens) and de-dupes parts
@@ -2773,6 +2830,7 @@ def run_transform(
     sup["_seo_title"] = sup["_seo_title"].apply(_scrub_nan_token_in_title)
     
     sup["_seo_title"] = sup["_seo_title"].apply(_strip_size_tokens)
+    sup["_seo_title"] = sup["_seo_title"].apply(_clean_supplier_display_text)
 # SEO Description: RESTORE previous behavior
     # Prefix fixe + contenu marque (help data -> SEO Description Brand Part), sinon fallback générique
     def _seo_desc(r):
