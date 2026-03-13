@@ -1759,15 +1759,47 @@ def run_transform(
     # -----------------------------------------------------
     name_hint_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style", "Description", "Display Name", "Online Display Name"])
     sku_hint_col = extid_col or product_col
-    def _infer_gender_from_texts(name_val: str, sku_val: str) -> str:
+    sku_gender_cols = []
+    for _c in [
+        product_col,
+        extid_col,
+        _first_existing_col(sup, ["SKU", "sku"]),
+        _first_existing_col(sup, ["SKU 1", "sku 1"]),
+        _first_existing_col(sup, ["SKU1", "sku1"]),
+    ]:
+        if _c and _c not in sku_gender_cols:
+            sku_gender_cols.append(_c)
+
+    def _infer_gender_from_texts(name_val: str, sku_val: str, sku_values: list[str] | None = None) -> str:
         """Infer gender from supplier text + SKU-like fields.
 
         Looks for:
+        - if ALL non-empty SKU-like columns start with M => Men
+        - if ALL non-empty SKU-like columns start with W => Women
         - explicit SKU markers: -w- / -m- (with or without spaces)
         - 'Women' / 'Men' words (incl. possessive)
         - codes like W#### or M#### (prefix letter + digits)
         """
-        t = f"{_norm(name_val)} {_norm(sku_val)}".lower()
+        sku_values = sku_values or []
+
+        # New rule requested by user:
+        # only infer from SKU prefix when every non-empty SKU-like column agrees.
+        sku_prefixes = []
+        for raw in sku_values:
+            s = _norm(raw).strip()
+            if not s:
+                continue
+            m = re.match(r"(?i)^([mw])(?=[a-z0-9])", s)
+            if m:
+                sku_prefixes.append(m.group(1).upper())
+            else:
+                sku_prefixes.append("OTHER")
+        if sku_prefixes and all(p == "M" for p in sku_prefixes):
+            return "Men"
+        if sku_prefixes and all(p == "W" for p in sku_prefixes):
+            return "Women"
+
+        t = f"{_norm(name_val)} {_norm(sku_val)} {' '.join(_norm(v) for v in sku_values)}".lower()
 
         # Strong markers in SKUs like -w- / -m- (allow no spaces too)
         if re.search(r"-\s*w\s*-", t) or re.search(r"-w-", t):
@@ -1937,6 +1969,7 @@ def run_transform(
         lambda r: _infer_gender_from_texts(
             r.get(name_hint_col, "") if name_hint_col else "",
             r.get(sku_hint_col, "") if sku_hint_col else "",
+            [r.get(c, "") for c in sku_gender_cols],
         ),
         axis=1,
     )
