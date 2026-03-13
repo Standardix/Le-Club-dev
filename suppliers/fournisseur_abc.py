@@ -549,7 +549,7 @@ def _remove_size_from_handle(handle: str) -> str:
     h = str(handle).strip().lower()
 
     # Tailles alpha à la fin
-    h = re.sub(r"-(xs|s|m|l|xl|xxl|xxxl|os)$", "", h)
+    h = re.sub(r"-(xxs|xs|s|m|l|xl|xxl|xxxl|os)$", "", h)
 
     # Tailles numériques à la fin (6, 6.5, 10-5, etc.)
     h = re.sub(r"-\d+([.-]\d+)?$", "", h)
