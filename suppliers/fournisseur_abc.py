@@ -281,7 +281,8 @@ def _read_le_braquet_xlsx(file_bytes: bytes) -> pd.DataFrame:
     - Data starts at row 15
     - Column H (SKU / code produit boutique) identifies item rows
     """
-    wb = load_workbook(io.BytesIO(file_bytes), data_only=False)
+    # data_only=True to read the computed value of "Coûtant" instead of Excel formulas
+    wb = load_workbook(io.BytesIO(file_bytes), data_only=True)
     if "Le Club" not in wb.sheetnames:
         raise ValueError('Onglet "Le Club" introuvable dans le fichier Le Braquet.')
     ws = wb["Le Club"]
@@ -336,6 +337,16 @@ def _read_le_braquet_xlsx(file_bytes: bytes) -> pd.DataFrame:
         df[c] = df[c].apply(lambda x: "" if x is None else x)
 
     df = df.loc[df["SKU"].astype(str).str.strip().ne("")].copy()
+
+    # Keep only rows where an order quantity was actually entered.
+    # For Le Braquet, blank or zero quantities must not be exported.
+    qty_raw = _series_str_clean(df["Quantity"]).str.strip()
+    qty_num = pd.to_numeric(
+        qty_raw.str.replace(",", ".", regex=False),
+        errors="coerce",
+    )
+    df = df.loc[qty_num.fillna(0) > 0].copy()
+
     df["_source_sheet"] = "Le Club"
     return df
 
