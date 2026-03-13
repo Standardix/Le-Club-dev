@@ -264,6 +264,82 @@ def _series_str_clean(s: pd.Series) -> pd.Series:
     s2 = s.fillna("").astype(str).replace({r"^\s*(nan|none)\s*$": ""}, regex=True)
     return s2
 
+
+def _read_le_braquet_xlsx(file_bytes: bytes) -> pd.DataFrame:
+    """
+    Read Le Braquet order workbook using ONLY the "Le Club" sheet.
+
+    Business rules:
+    - Ignore all other sheets.
+    - Expand merged-cell values so product-level rows inherit shared values
+      (section/gender, description, category, prices, colour, totals, etc.).
+    - Rebuild clear column names even when the workbook is a visual order form
+      rather than a tabular supplier export.
+
+    Expected layout in the uploaded workbook:
+    - Row 11/12 contain the visible headers
+    - Data starts at row 15
+    - Column H (SKU / code produit boutique) identifies item rows
+    """
+    wb = load_workbook(io.BytesIO(file_bytes), data_only=False)
+    if "Le Club" not in wb.sheetnames:
+        raise ValueError('Onglet "Le Club" introuvable dans le fichier Le Braquet.')
+    ws = wb["Le Club"]
+
+    # Build merged-value lookup from top-left cell of each merged range
+    merged_lookup = {}
+    for mr in ws.merged_cells.ranges:
+        top_left = ws.cell(mr.min_row, mr.min_col).value
+        for rr in range(mr.min_row, mr.max_row + 1):
+            for cc in range(mr.min_col, mr.max_col + 1):
+                merged_lookup[(rr, cc)] = top_left
+
+    def _cell_value(r: int, c: int):
+        v = ws.cell(r, c).value
+        if v is None and (r, c) in merged_lookup:
+            v = merged_lookup[(r, c)]
+        return v
+
+    # Explicit supplier column mapping based on the Le Braquet layout
+    col_names = [
+        "Unused A",          # A
+        "Gender",            # B
+        "Description",       # C
+        "Product Type",      # D (Coupe | Catégorie)
+        "Wholesale CAD",     # E (Coûtant)
+        "Retail CAD",        # F (PDSF)
+        "Color",             # G
+        "SKU",               # H
+        "GTIN",              # I
+        "Size",              # J
+        "Quantity",          # K
+        "Cost Total",        # L
+        "Total Quantity",    # M
+        "N", "O", "P", "Q", "R", "S", "T", "U",
+    ]
+
+    records = []
+    for r in range(15, ws.max_row + 1):
+        sku = _cell_value(r, 8)
+        if sku is None or str(sku).strip() == "":
+            continue
+
+        row = {col_names[c - 1]: _cell_value(r, c) for c in range(1, min(ws.max_column, len(col_names)) + 1)}
+        records.append(row)
+
+    if not records:
+        raise ValueError('Aucune ligne produit détectée dans l’onglet "Le Club" du fichier Le Braquet.')
+
+    df = pd.DataFrame(records)
+
+    for c in df.columns:
+        df[c] = df[c].apply(lambda x: "" if x is None else x)
+
+    df = df.loc[df["SKU"].astype(str).str.strip().ne("")].copy()
+    df["_source_sheet"] = "Le Club"
+    return df
+
+
 import numpy as np
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font
@@ -1487,6 +1563,11 @@ def run_transform(
           (Description-like), then concatenate.
         - If there is a single valid sheet, behaves like the previous implementation.
         """
+        # Supplier-specific override: Le Braquet uses a visual order form.
+        # We must read ONLY the "Le Club" sheet, rebuild headers, and propagate merged values.
+        if _colkey(vendor_name) in ("lebraquet",):
+            return _read_le_braquet_xlsx(file_bytes)
+
         # CSV support (v15): allow suppliers to provide a single CSV instead of XLSX
         if str(file_name or "").strip().lower().endswith(".csv"):
             try:
@@ -1743,7 +1824,7 @@ def run_transform(
     product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
     color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code", "colour code and name", "Colour Code and Name", "Color Code and Name", "STYLE COLOR NAME", "Style Color Name", "Style colour name", "Style Color", "Style Colour"])
     size_col = _first_existing_col(sup, ["Size 1","Size1","Size", "size", "Vendor Size1", "vendor size1"])
-    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "Barcode 1", "Bar Code 1" "upc", "upc code"])
+    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
     ean_col = _first_existing_col(sup, ["EAN", "EAN Code", "ean", "ean code"])
     origin_col = _first_existing_col(sup, ["Country of origin", "Country of Origin", "Country Of Origin", "Country Code", "Origin", "Manufacturing Country", "COO", "country of origin", "country of origin ", "country code", "origin", "manufacturing country", "coo"])
     hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code", "commodity hs", "commodity hts", "Commodity HS", "Commodity HTS", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "custom tariff code (no dots)", "custom tariff code", "tariff code", "Harmonisation Code", "Harmonization Code"])
