@@ -3001,7 +3001,26 @@ def run_transform(
     _k = sup["_style_key_v12"].astype(str).str.strip()
     counts = _k[_k.ne("")].value_counts()
     mask_single_style = _k.map(lambda x: counts.get(x, 0) == 1 if x else False)
-    # Ne pas forcer "Default Title" si une vraie taille est présente (ex: XS, S, M, etc.)
+
+    # Café du Cycliste: lorsqu'un produit n'a qu'un seul variant et que la taille est "U",
+    # traiter ce cas comme un OS/Default Title (ne rien inscrire comme taille).
+    _brand_key_v12 = (sup.get("_brand_choice", "") if "_brand_choice" in sup.columns else "")
+    if isinstance(_brand_key_v12, str):
+        _brand_key_v12 = pd.Series([_brand_key_v12] * len(sup), index=sup.index)
+    else:
+        _brand_key_v12 = _brand_key_v12.astype(str)
+    _vendor_key_v12 = (sup.get("_vendor", "") if "_vendor" in sup.columns else "")
+    if isinstance(_vendor_key_v12, str):
+        _vendor_key_v12 = pd.Series([_vendor_key_v12] * len(sup), index=sup.index)
+    else:
+        _vendor_key_v12 = _vendor_key_v12.astype(str)
+
+    mask_cafe_brand = _brand_key_v12.map(_norm_key).isin({"cafeducycliste", "cafe du cycliste"}) | _vendor_key_v12.map(_norm_key).isin({"cafeducycliste", "cafe du cycliste"})
+    _size_clean_for_cafe = sup["_size_std"].map(_strip_gender_prefix_size).astype(str).str.strip()
+    mask_cafe_u_single = mask_cafe_brand & mask_single_style & _size_clean_for_cafe.str.upper().eq("U")
+    sup.loc[mask_cafe_u_single, "_size_std"] = ""
+
+    # Recompute after the Café-specific normalization above
     _size_clean = sup["_size_std"].map(_strip_gender_prefix_size).astype(str).str.strip()
     _dash_tokens = {"-", "–", "—"}
     mask_has_real_size = _size_clean.ne("") & (~sup["_size_std"].astype(str).apply(_is_onesize)) & (~_size_clean.isin(_dash_tokens))
