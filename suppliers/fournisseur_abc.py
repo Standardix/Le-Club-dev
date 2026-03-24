@@ -654,6 +654,57 @@ def _clean_supplier_display_text(v) -> str:
     s = re.sub(r"\s{2,}", " ", s)
     return s.strip()
 
+def _fix_common_mojibake(v) -> str:
+    """Repair common UTF-8/CP1252 mojibake seen in some supplier files.
+
+    Applied only in supplier-specific branches where requested, so other vendors stay unchanged.
+    """
+    if v is None:
+        return ""
+    s = str(v)
+    if not s:
+        return ""
+
+    # Typical mojibake fingerprints worth attempting to repair
+    if any(tok in s for tok in ("Ã", "â", "Â", "�")):
+        try:
+            repaired = s.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
+            if repaired and repaired != s:
+                s = repaired
+        except Exception:
+            pass
+
+    replacements = {
+        "CafÃ©": "Café",
+        "cafÃ©": "café",
+        "Cafâˆšâ©": "Café",
+        "cafâˆšâ©": "café",
+        "Ã©": "é",
+        "Ã¨": "è",
+        "Ãª": "ê",
+        "Ã«": "ë",
+        "Ã ": "à",
+        "Ã¢": "â",
+        "Ã®": "î",
+        "Ã¯": "ï",
+        "Ã´": "ô",
+        "Ã¶": "ö",
+        "Ã¹": "ù",
+        "Ã»": "û",
+        "Ã¼": "ü",
+        "Ã§": "ç",
+        "â€™": "’",
+        "â€“": "–",
+        "â€¢": "•",
+        "Â°": "°",
+        "Â": "",
+    }
+    for bad, good in replacements.items():
+        s = s.replace(bad, good)
+
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    return s
+
 def _strip_made_in(s: str) -> str:
     t = _norm(s)
     # remove common prefixes like "Made In "
@@ -2030,6 +2081,32 @@ def run_transform(
     sup["_desc_handle"] = sup.apply(lambda r: _strip_reg_for_handle(r["_title_name_raw"]) if r.get("_desc_is_long") and r.get("_title_name_raw") else _strip_reg_for_handle(r["_desc_raw"]), axis=1)
 
     # -----------------------------------------------------
+    # Supplier-specific rule: Café du Cycliste
+    # Build product display name from Name + Product Type for titles,
+    # instead of using the literal marketing description from NuOrder.
+    # Also repair common accent/mojibake issues for this supplier only.
+    # -----------------------------------------------------
+    if vendor_key in ("caféducycliste", "cafeducycliste"):
+        cafe_name_col = _first_existing_col(sup, ["Name"])
+        cafe_type_col = _first_existing_col(sup, ["Product Type"])
+
+        def _cafe_title_source_row(r) -> str:
+            name = _fix_common_mojibake(_norm(r.get(cafe_name_col, ""))) if cafe_name_col else ""
+            ptype = _fix_common_mojibake(_norm(r.get(cafe_type_col, ""))) if cafe_type_col else ""
+            combo = " ".join([x for x in [name, ptype] if str(x).strip()])
+            combo = re.sub(r"\s{2,}", " ", combo).strip()
+            return combo
+
+        cafe_title_source = sup.apply(_cafe_title_source_row, axis=1)
+        mask_has_cafe_title = cafe_title_source.astype(str).str.strip().ne("")
+
+        # Title/SEO/handle should be based on Name + Product Type for Café du Cycliste
+        sup.loc[mask_has_cafe_title, "_desc_title_norm"] = cafe_title_source[mask_has_cafe_title]
+        sup.loc[mask_has_cafe_title, "_desc_raw"] = cafe_title_source[mask_has_cafe_title]
+        sup.loc[mask_has_cafe_title, "_desc_handle"] = cafe_title_source[mask_has_cafe_title].map(_strip_reg_for_handle)
+        sup.loc[mask_has_cafe_title, "_desc_seo"] = cafe_title_source[mask_has_cafe_title].map(_convert_r_to_registered)
+
+    # -----------------------------------------------------
     # Long description rule:
     # If the SOURCE description text is > 200 chars, move it to Body (HTML)
     # and build Title from Style Name / Name instead of the long description.
@@ -2045,6 +2122,11 @@ def run_transform(
     sup["_desc_title_norm"] = sup["_desc_raw"].copy()
     if title_name_col:
         sup["_title_name_raw"] = _series_str_clean(sup[title_name_col]).map(_clean_supplier_display_text).map(_norm)
+
+    if vendor_key in ("caféducycliste", "cafeducycliste"):
+        for _c in ["_body_html", "_desc_source", "_desc_raw", "_desc_title_norm", "_desc_seo", "_title_name_raw"]:
+            if _c in sup.columns:
+                sup[_c] = _series_str_clean(sup[_c]).map(_fix_common_mojibake)
     # Color / Size input
     sup["_color_raw"] = _series_str_clean(sup[color_col]).map(_clean_color_label).map(_norm) if color_col else ""
     sup["_size_raw"] = _series_str_clean(sup[size_col]).map(_norm) if size_col else ""
