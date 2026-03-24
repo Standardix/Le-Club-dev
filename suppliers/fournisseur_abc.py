@@ -3044,7 +3044,9 @@ def run_transform(
 
         if brand_key in ("cafe du cycliste", "café du cycliste"):
             base = _clean_hyphens_sku(r.get("_sku_fallback", ""))
-            return f"{base}-{size}" if base and size else ""
+            if base and size:
+                return f"{base}-{size}"
+            return base if base else ""
 
         # Other suppliers: first non-empty among SKU / SKU 1 / SKU1 (already resolved into _sku_fallback)
         base = _clean_hyphens_sku(r.get("_sku_fallback", ""))
