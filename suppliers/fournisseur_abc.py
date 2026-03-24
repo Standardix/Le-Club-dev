@@ -772,16 +772,18 @@ def _strip_gender_prefix_size(v: str) -> str:
 
 
 def _is_onesize(v: str) -> bool:
-    """Return True if the size represents a One Size / OS variant."""
+    """Return True if the size represents a One Size / OS variant.
+    Includes supplier-specific aliases like U (Unisex/unique size).
+    """
     s = _norm(v).lower()
     if not s:
         return False
     s2 = re.sub(r"[\s\-_]+", "", s)
-    if s2 in {"os", "onesize"}:
+    if s2 in {"os", "onesize", "u"}:
         return True
     if s.startswith("one size"):
         return True
-    if s in {"one-size", "one size", "one_size", "onesize"}:
+    if s in {"one-size", "one size", "one_size", "onesize", "u"}:
         return True
     if s in {"o/s", "o-s"}:
         return True
@@ -3001,26 +3003,7 @@ def run_transform(
     _k = sup["_style_key_v12"].astype(str).str.strip()
     counts = _k[_k.ne("")].value_counts()
     mask_single_style = _k.map(lambda x: counts.get(x, 0) == 1 if x else False)
-
-    # Café du Cycliste: lorsqu'un produit n'a qu'un seul variant et que la taille est "U",
-    # traiter ce cas comme un OS/Default Title (ne rien inscrire comme taille).
-    _brand_key_v12 = (sup.get("_brand_choice", "") if "_brand_choice" in sup.columns else "")
-    if isinstance(_brand_key_v12, str):
-        _brand_key_v12 = pd.Series([_brand_key_v12] * len(sup), index=sup.index)
-    else:
-        _brand_key_v12 = _brand_key_v12.astype(str)
-    _vendor_key_v12 = (sup.get("_vendor", "") if "_vendor" in sup.columns else "")
-    if isinstance(_vendor_key_v12, str):
-        _vendor_key_v12 = pd.Series([_vendor_key_v12] * len(sup), index=sup.index)
-    else:
-        _vendor_key_v12 = _vendor_key_v12.astype(str)
-
-    mask_cafe_brand = _brand_key_v12.map(_norm_key).isin({"cafeducycliste", "cafe du cycliste"}) | _vendor_key_v12.map(_norm_key).isin({"cafeducycliste", "cafe du cycliste"})
-    _size_clean_for_cafe = sup["_size_std"].map(_strip_gender_prefix_size).astype(str).str.strip()
-    mask_cafe_u_single = mask_cafe_brand & mask_single_style & _size_clean_for_cafe.str.upper().eq("U")
-    sup.loc[mask_cafe_u_single, "_size_std"] = ""
-
-    # Recompute after the Café-specific normalization above
+    # Ne pas forcer "Default Title" si une vraie taille est présente (ex: XS, S, M, etc.)
     _size_clean = sup["_size_std"].map(_strip_gender_prefix_size).astype(str).str.strip()
     _dash_tokens = {"-", "–", "—"}
     mask_has_real_size = _size_clean.ne("") & (~sup["_size_std"].astype(str).apply(_is_onesize)) & (~_size_clean.isin(_dash_tokens))
@@ -3039,9 +3022,14 @@ def run_transform(
     def _make_variant_sku(r):
         # Identify brand/vendor (case-insensitive)
         brand_key = _norm_key(r.get("_brand_choice", "")) or _norm_key(r.get("_vendor", ""))
-                # Size doit provenir de 'Variant Metafield: mm-google-shopping.size' (via _size_std)
-        size_raw = _strip_gender_prefix_size(r.get("_size_std", ""))
-        size = _clean_hyphens_sku(size_raw)
+        # Size must follow the same logic as the exported Google size metafield.
+        # When Option1 is switched to Title / Default Title (OS, U, single-variant no true size),
+        # the SKU must not append any trailing size token.
+        if _norm(r.get("_opt1_name", "")).lower() == "title":
+            size = ""
+        else:
+            size_raw = _strip_gender_prefix_size(r.get("_size_std", ""))
+            size = _clean_hyphens_sku(size_raw)
         # Ne jamais utiliser 'Default Title' comme taille
         if _norm_key(size) in ("default title", "default", "default value"):
             size = ""
@@ -3114,7 +3102,10 @@ def run_transform(
 
     out["Metafield: my_fields.colour [single_line_text_field]"] = sup["_color_std"]
     out["Metafield: mm-google-shopping.color"] = sup["_color_std"]
-    out["Variant Metafield: mm-google-shopping.size"] = sup["_size_std"].map(_strip_gender_prefix_size)
+    out["Variant Metafield: mm-google-shopping.size"] = sup.apply(
+        lambda r: "" if _norm(r.get("_opt1_name", "")).lower() == "title" else _strip_gender_prefix_size(r.get("_size_std", "")),
+        axis=1,
+    )
 
     out["Metafield: mm-google-shopping.size_system"] = "US"
     out["Metafield: mm-google-shopping.condition"] = "new"
