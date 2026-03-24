@@ -655,9 +655,9 @@ def _clean_supplier_display_text(v) -> str:
     return s.strip()
 
 def _fix_common_mojibake(v) -> str:
-    """Repair common UTF-8/CP1252 mojibake seen in some supplier files.
+    """Repair common UTF-8/CP1252 mojibake seen in supplier files.
 
-    Applied only in supplier-specific branches where requested, so other vendors stay unchanged.
+    Safe general cleanup that can be applied across all suppliers.
     """
     if v is None:
         return ""
@@ -2084,7 +2084,7 @@ def run_transform(
     # Supplier-specific rule: Café du Cycliste
     # Build product display name from Name + Product Type for titles,
     # instead of using the literal marketing description from NuOrder.
-    # Also repair common accent/mojibake issues for this supplier only.
+    # Also repair common accent/mojibake issues.
     # -----------------------------------------------------
     if vendor_key in ("caféducycliste", "cafeducycliste"):
         cafe_name_col = _first_existing_col(sup, ["Name"])
@@ -2123,10 +2123,27 @@ def run_transform(
     if title_name_col:
         sup["_title_name_raw"] = _series_str_clean(sup[title_name_col]).map(_clean_supplier_display_text).map(_norm)
 
+    for _c in ["_body_html", "_desc_source", "_desc_raw", "_desc_title_norm", "_desc_seo", "_title_name_raw"]:
+        if _c in sup.columns:
+            sup[_c] = _series_str_clean(sup[_c]).map(_fix_common_mojibake)
+
+    # Re-apply Café du Cycliste title source AFTER the generic description/body cleanup,
+    # otherwise the description column can overwrite the supplier-specific naming rule.
+    # Desired display name for this supplier: current Women's logic + Name + Product Type.
     if vendor_key in ("caféducycliste", "cafeducycliste"):
-        for _c in ["_body_html", "_desc_source", "_desc_raw", "_desc_title_norm", "_desc_seo", "_title_name_raw"]:
-            if _c in sup.columns:
-                sup[_c] = _series_str_clean(sup[_c]).map(_fix_common_mojibake)
+        cafe_name_col = _first_existing_col(sup, ["Name"])
+        cafe_type_col = _first_existing_col(sup, ["Product Type"])
+
+        def _cafe_title_source_row_after_cleanup(r) -> str:
+            name = _fix_common_mojibake(_clean_supplier_display_text(_norm(r.get(cafe_name_col, "")))) if cafe_name_col else ""
+            ptype = _fix_common_mojibake(_clean_supplier_display_text(_norm(r.get(cafe_type_col, "")))) if cafe_type_col else ""
+            combo = " ".join([x for x in [name, ptype] if str(x).strip()])
+            combo = re.sub(r"\s{2,}", " ", combo).strip()
+            return combo
+
+        cafe_title_source = sup.apply(_cafe_title_source_row_after_cleanup, axis=1)
+        mask_has_cafe_title = cafe_title_source.astype(str).str.strip().ne("")
+        sup.loc[mask_has_cafe_title, "_desc_title_norm"] = cafe_title_source[mask_has_cafe_title]
     # Color / Size input
     sup["_color_raw"] = _series_str_clean(sup[color_col]).map(_clean_color_label).map(_norm) if color_col else ""
     sup["_size_raw"] = _series_str_clean(sup[size_col]).map(_norm) if size_col else ""
