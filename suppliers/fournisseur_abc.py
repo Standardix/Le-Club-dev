@@ -191,22 +191,6 @@ def _header_has_cad(col_name: str) -> bool:
 
 
 
-
-def _safe_endswith(value, suffix: str) -> bool:
-    """Safe endswith that never crashes on pandas Series/DataFrame or other non-string values."""
-    try:
-        import pandas as pd
-        if isinstance(value, (pd.Series, pd.DataFrame)):
-            return False
-    except Exception:
-        pass
-    if value is None:
-        return False
-    try:
-        return str(value).endswith(str(suffix))
-    except Exception:
-        return False
-
 import io
 import re
 import math
@@ -382,13 +366,26 @@ from openpyxl.comments import Comment
 
 # Optional dependency: python-slugify
 try:
-    from slugify import slugify  # type: ignore
+    from slugify import slugify as _slugify_pkg  # type: ignore
 except Exception:
-    def slugify(value: str) -> str:
-        s = str(value or "").strip().lower()
-        s = re.sub(r"[^a-z0-9]+", "-", s)
-        s = re.sub(r"-{2,}", "-", s).strip("-")
-        return s
+    _slugify_pkg = None
+
+def slugify(value) -> str:
+    """Safe slugify wrapper.
+    Always coerces the input to a plain string before slugifying, so accidental
+    pandas objects cannot crash with errors like: Series has no attribute endswith.
+    """
+    s = str(value or "").strip().lower()
+    if not s:
+        return ""
+    if _slugify_pkg is not None:
+        try:
+            return _slugify_pkg(s)
+        except Exception:
+            pass
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    return s
 
 def _build_existing_shopify_index(existing_shopify_xlsx_bytes: bytes | None):
     """Build matching indexes from an existing Shopify product export/list.
@@ -773,7 +770,7 @@ def _remove_color_from_handle(handle: str, color_in: str) -> str:
     if not color_slug:
         return h
     suffix = "-" + color_slug
-    if _safe_endswith(str(h).lower(), str(suffix).lower()):
+    if h.lower().endswith(suffix.lower()):
         return h[: -len(suffix)]
     return h
 
@@ -921,7 +918,7 @@ def _words(s: str) -> list[str]:
 
 
 def _singularize_token(tok: str) -> str:
-    if _safe_endswith(tok, "s") and len(str(tok)) >= 4:
+    if tok.endswith("s") and len(tok) >= 4:
         return tok[:-1]
     return tok
 
@@ -985,7 +982,7 @@ def _read_2col_map(wb, sheet_candidates: list[str]) -> dict[str, str]:
         m[ra.lower()] = rb
         # basic singular/plural fallbacks for French/English gender labels
         lk = ra.lower()
-        if _safe_endswith(lk, 's'):
+        if lk.endswith('s'):
             m.setdefault(lk[:-1], rb)
         else:
             m.setdefault(lk + 's', rb)
@@ -1162,7 +1159,7 @@ def _read_product_type_gendered_map(wb, sheet_name: str = "Product Types") -> di
     def _singularize(s: str) -> str:
         # very small heuristic: Water Bottles -> Water Bottle, Vests -> Vest, etc.
         t = _norm_pt(s)
-        if _safe_endswith(t, "s") and len(str(t)) >= 4 and not _safe_endswith(t, "ss"):
+        if t.endswith("s") and len(t) >= 4 and not t.endswith("ss"):
             return t[:-1]
         return t
 
@@ -1170,7 +1167,7 @@ def _read_product_type_gendered_map(wb, sheet_name: str = "Product Types") -> di
         t = _norm_pt(s)
         if not t:
             return t
-        if _safe_endswith(t, "s"):
+        if t.endswith("s"):
             return t
         return t + "s"
 
@@ -1237,8 +1234,8 @@ def _read_product_type_unisex_map(wb, sheet_name: str = "Product Types") -> dict
     # Add basic singular/plural variants like gendered map does
     expanded = dict(mapping)
     for k, v in mapping.items():
-        if _safe_endswith(k, "s"):
-            expanded.setdefault(str(k)[:-1], v)
+        if k.endswith("s"):
+            expanded.setdefault(k[:-1], v)
         else:
             expanded.setdefault(k + "s", v)
     return expanded
@@ -1700,7 +1697,7 @@ def run_transform(
             return _read_le_braquet_xlsx(file_bytes)
 
         # CSV support (v15): allow suppliers to provide a single CSV instead of XLSX
-        if _safe_endswith(str(file_name or "").strip().lower(), ".csv"):
+        if str(file_name or "").strip().lower().endswith(".csv"):
             try:
                 df_csv = _read_supplier_csv(io.BytesIO(file_bytes), file_name)
             except Exception as e:
@@ -1911,7 +1908,7 @@ def run_transform(
         if k in _pt_canon:
             return _pt_canon[k]
         # singular/plural tolerance (only for matching; returns canonical from Help Data)
-        if _safe_endswith(k, "s") and str(k)[:-1] in _pt_canon:
+        if k.endswith("s") and k[:-1] in _pt_canon:
             return _pt_canon[k[:-1]]
         if (k + "s") in _pt_canon:
             return _pt_canon[k + "s"]
@@ -3245,7 +3242,7 @@ def run_transform(
 
             try:
                 rgb = getattr(getattr(cell.font, "color", None), "rgb", None)
-                if rgb and _safe_endswith(str(rgb).upper(), "FF0000"):
+                if rgb and str(rgb).upper().endswith("FF0000"):
                     cell.font = white_font
             except Exception:
                 pass
