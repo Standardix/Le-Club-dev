@@ -2325,7 +2325,7 @@ def run_transform(
     # Avoid duplicating colour in Title if it is already present in the description text
     _desc_l = sup["_desc_title_norm"].astype(str).str.lower()
     _col_l = sup["_color_in"].astype(str).str.lower()
-    mask_col_dup = _col_l.str.strip().ne("") & _desc_l.str.contains(_col_l.str.strip(), regex=False)
+    mask_col_dup = _col_l.str.strip().ne("") & pd.Series([((c.strip().lower() in d.lower()) if c.strip() else False) for d, c in zip(_desc_l.astype(str), _col_l.astype(str))], index=sup.index)
     sup.loc[mask_col_dup, "_color_title"] = ""
     base_title = (sup["_gender_title"].str.strip() + " " + sup["_desc_title"].str.strip()).str.strip()
 
