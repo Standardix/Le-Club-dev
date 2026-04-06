@@ -162,6 +162,37 @@ def _norm_upc(v) -> str:
 
 
 
+def _safe_scalar_text(v) -> str:
+    """Return a safe scalar string even if a pandas object is passed accidentally."""
+    try:
+        import pandas as pd  # type: ignore
+        import numpy as np  # type: ignore
+        if isinstance(v, pd.Series):
+            if len(v) == 0:
+                return ""
+            v = v.iloc[0]
+        elif isinstance(v, pd.DataFrame):
+            if v.empty:
+                return ""
+            v = v.iloc[0, 0]
+        elif isinstance(v, np.ndarray):
+            if v.size == 0:
+                return ""
+            v = v.flat[0]
+    except Exception:
+        pass
+    if v is None:
+        return ""
+    try:
+        if isinstance(v, float) and math.isnan(v):
+            return ""
+    except Exception:
+        pass
+    s = str(v)
+    return "" if s.lower() in ("nan", "none") else s
+
+
+
 def _colkey(c: str) -> str:
     """Normalize column name: lower, remove spaces/punct/parentheses for robust matching."""
     s = str(c or "").strip().lower()
@@ -366,26 +397,13 @@ from openpyxl.comments import Comment
 
 # Optional dependency: python-slugify
 try:
-    from slugify import slugify as _slugify_pkg  # type: ignore
+    from slugify import slugify  # type: ignore
 except Exception:
-    _slugify_pkg = None
-
-def slugify(value) -> str:
-    """Safe slugify wrapper.
-    Always coerces the input to a plain string before slugifying, so accidental
-    pandas objects cannot crash with errors like: Series has no attribute endswith.
-    """
-    s = str(value or "").strip().lower()
-    if not s:
-        return ""
-    if _slugify_pkg is not None:
-        try:
-            return _slugify_pkg(s)
-        except Exception:
-            pass
-    s = re.sub(r"[^a-z0-9]+", "-", s)
-    s = re.sub(r"-{2,}", "-", s).strip("-")
-    return s
+    def slugify(value: str) -> str:
+        s = str(value or "").strip().lower()
+        s = re.sub(r"[^a-z0-9]+", "-", s)
+        s = re.sub(r"-{2,}", "-", s).strip("-")
+        return s
 
 def _build_existing_shopify_index(existing_shopify_xlsx_bytes: bytes | None):
     """Build matching indexes from an existing Shopify product export/list.
@@ -770,7 +788,7 @@ def _remove_color_from_handle(handle: str, color_in: str) -> str:
     if not color_slug:
         return h
     suffix = "-" + color_slug
-    if h.lower().endswith(suffix.lower()):
+    if _safe_scalar_text(h).lower().endswith(_safe_scalar_text(suffix).lower()):
         return h[: -len(suffix)]
     return h
 
@@ -918,6 +936,7 @@ def _words(s: str) -> list[str]:
 
 
 def _singularize_token(tok: str) -> str:
+    tok = _safe_scalar_text(tok)
     if tok.endswith("s") and len(tok) >= 4:
         return tok[:-1]
     return tok
@@ -982,6 +1001,7 @@ def _read_2col_map(wb, sheet_candidates: list[str]) -> dict[str, str]:
         m[ra.lower()] = rb
         # basic singular/plural fallbacks for French/English gender labels
         lk = ra.lower()
+        lk = _safe_scalar_text(lk)
         if lk.endswith('s'):
             m.setdefault(lk[:-1], rb)
         else:
@@ -1159,6 +1179,7 @@ def _read_product_type_gendered_map(wb, sheet_name: str = "Product Types") -> di
     def _singularize(s: str) -> str:
         # very small heuristic: Water Bottles -> Water Bottle, Vests -> Vest, etc.
         t = _norm_pt(s)
+        t = _safe_scalar_text(t)
         if t.endswith("s") and len(t) >= 4 and not t.endswith("ss"):
             return t[:-1]
         return t
@@ -1167,6 +1188,7 @@ def _read_product_type_gendered_map(wb, sheet_name: str = "Product Types") -> di
         t = _norm_pt(s)
         if not t:
             return t
+        t = _safe_scalar_text(t)
         if t.endswith("s"):
             return t
         return t + "s"
@@ -1234,6 +1256,7 @@ def _read_product_type_unisex_map(wb, sheet_name: str = "Product Types") -> dict
     # Add basic singular/plural variants like gendered map does
     expanded = dict(mapping)
     for k, v in mapping.items():
+        k = _safe_scalar_text(k)
         if k.endswith("s"):
             expanded.setdefault(k[:-1], v)
         else:
@@ -1697,7 +1720,7 @@ def run_transform(
             return _read_le_braquet_xlsx(file_bytes)
 
         # CSV support (v15): allow suppliers to provide a single CSV instead of XLSX
-        if str(file_name or "").strip().lower().endswith(".csv"):
+        if _safe_scalar_text(file_name).strip().lower().endswith(".csv"):
             try:
                 df_csv = _read_supplier_csv(io.BytesIO(file_bytes), file_name)
             except Exception as e:
@@ -1908,6 +1931,7 @@ def run_transform(
         if k in _pt_canon:
             return _pt_canon[k]
         # singular/plural tolerance (only for matching; returns canonical from Help Data)
+        k = _safe_scalar_text(k)
         if k.endswith("s") and k[:-1] in _pt_canon:
             return _pt_canon[k[:-1]]
         if (k + "s") in _pt_canon:
@@ -3242,7 +3266,7 @@ def run_transform(
 
             try:
                 rgb = getattr(getattr(cell.font, "color", None), "rgb", None)
-                if rgb and str(rgb).upper().endswith("FF0000"):
+                if rgb and _safe_scalar_text(rgb).upper().endswith("FF0000"):
                     cell.font = white_font
             except Exception:
                 pass
