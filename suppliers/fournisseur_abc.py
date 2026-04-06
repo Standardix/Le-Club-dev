@@ -2740,7 +2740,7 @@ def run_transform(
     #
     # Sinon (autres fournisseurs): prendre la 1ère colonne non vide dans cet ordre: SKU, SKU 1, SKU1
     # Si aucune donnée: laisser vide (et la règle de surlignage jaune existante s'applique).
-    sku_col = _first_existing_col(sup, ["SKU", "SKU 1", "SKU1", "sku", "sku 1", "sku1"])
+    sku_col = _first_existing_col(sup, ["Line: SKU", "line: sku", "Line: Variant SKU", "line: variant sku", "SKU", "SKU 1", "SKU1", "sku", "sku 1", "sku1"])
     sku1_col = _first_existing_col(sup, ["SKU 1", "sku 1"])
     sku1_nospace_col = _first_existing_col(sup, ["SKU1", "sku1"])
 
