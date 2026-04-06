@@ -1987,7 +1987,7 @@ def run_transform(
         if non_empty_ratio < 0.2:
             desc_col = desc_col_fallback
 
-    product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku", "Line: SKU", "line: sku", "Line: Variant SKU", "line: variant sku"])
+    product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku", "Line: SKU", "line: sku", "Line: Variant SKU", "Line: SKU", "line: variant sku"])
     color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code", "colour code and name", "Colour Code and Name", "Color Code and Name", "STYLE COLOR NAME", "Style Color Name", "Style colour name", "Style Color", "Style Colour"])
     size_col = _first_existing_col(sup, ["Line: Variant Title", "line: variant title", "Size 1","Size1","Size", "size", "Vendor Size1", "vendor size1"])
     upc_col = _first_existing_col(sup, ["Line: Variant Barcode", "line: variant barcode", "UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
