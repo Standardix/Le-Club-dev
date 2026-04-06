@@ -750,9 +750,9 @@ def _remove_size_from_handle(handle: str) -> str:
 
 def _remove_color_from_handle(handle: str, color_in: str) -> str:
     """Remove trailing color slug from handle (theme.siblings must NEVER include color)."""
-    if not handle:
+    h = "" if handle is None else str(handle).strip()
+    if not h:
         return ""
-    h = str(handle).strip()
     c = _strip_reg_for_handle(color_in or "")
     c = _norm(c)
     if not c:
@@ -1152,12 +1152,16 @@ def _read_product_type_gendered_map(wb, sheet_name: str = "Product Types") -> di
     def _singularize(s: str) -> str:
         # very small heuristic: Water Bottles -> Water Bottle, Vests -> Vest, etc.
         t = _norm_pt(s)
+        if not isinstance(t, str):
+            t = str(t or "")
         if t.endswith("s") and len(t) >= 4 and not t.endswith("ss"):
             return t[:-1]
         return t
 
     def _pluralize(s: str) -> str:
         t = _norm_pt(s)
+        if not isinstance(t, str):
+            t = str(t or "")
         if not t:
             return t
         if t.endswith("s"):
@@ -1898,16 +1902,25 @@ def run_transform(
     _pt_canon = { _norm_key(pt): pt for pt in (product_types or []) if _norm(pt) }
 
     def _canon_product_type(pt: str) -> str:
+        if pt is None:
+            return ""
+        if hasattr(pt, "iloc"):
+            try:
+                pt = pt.iloc[0]
+            except Exception:
+                pt = ""
         s = _norm(pt)
         if not s:
             return ""
         k = _norm_key(s)
+        if not isinstance(k, str):
+            k = str(k or "")
         if k in _pt_canon:
             return _pt_canon[k]
         # singular/plural tolerance (only for matching; returns canonical from Help Data)
-        if k.endswith("s") and k[:-1] in _pt_canon:
+        if isinstance(k, str) and k.endswith("s") and k[:-1] in _pt_canon:
             return _pt_canon[k[:-1]]
-        if (k + "s") in _pt_canon:
+        if isinstance(k, str) and (k + "s") in _pt_canon:
             return _pt_canon[k + "s"]
         return s
 
