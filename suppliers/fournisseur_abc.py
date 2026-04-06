@@ -187,7 +187,13 @@ def _find_col(df_cols, candidates):
 
 
 def _header_has_cad(col_name: str) -> bool:
-    return "cad" in str(col_name or "").lower()
+    s = str(col_name or "").lower()
+    if "cad" in s:
+        return True
+    # LeClub_UPCExport / Shopify-style order exports
+    if s in {"line: price", "line: variant price", "cost price in cad", "landed cost"}:
+        return True
+    return False
 
 
 
@@ -403,8 +409,8 @@ def _build_existing_shopify_index(existing_shopify_xlsx_bytes: bytes | None):
     cols_l = {str(c).strip().lower(): c for c in df.columns}
     handle_col = cols_l.get("handle")
     vendor_col = cols_l.get("vendor") or cols_l.get("brand")
-    sku_col = cols_l.get("variant sku") or cols_l.get("sku")
-    upc_col = cols_l.get("variant barcode") or cols_l.get("barcode") or cols_l.get("upc")
+    sku_col = cols_l.get("variant sku") or cols_l.get("sku") or cols_l.get("line: variant sku") or cols_l.get("line: sku")
+    upc_col = cols_l.get("variant barcode") or cols_l.get("barcode") or cols_l.get("upc") or cols_l.get("line: variant barcode")
 
     for _, r in df.iterrows():
         h = _norm_handle(r.get(handle_col, "")) if handle_col else ""
@@ -1715,9 +1721,11 @@ def run_transform(
             "style_name", "STYLE_NAME",
             "Display Name", "display name", "Online Display Name", "online display name",
             "Technical Specifications", "technical specifications",
+            "Line: Name", "line: name",
         ]
         msrp_candidates = [
             "Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)",
+            "Line: Variant Price", "line: variant price", "Line: Price", "line: price",
         ]
 
         dfs: list[pd.DataFrame] = []
@@ -1825,11 +1833,13 @@ def run_transform(
     # -----------------------------------------------------
     detected_cost_col = _find_col(sup.columns, [
         "Wholesale CAD", "Wholesale (CAD)", "CAD Wholesale", "WholesaleCAD", "wholesale cad",
-        "Landed", "landed", "Wholesale Price (CAD)", "wholesale price (cad)", "Wholesale Price", "wholesale price"
+        "Landed", "landed", "Wholesale Price (CAD)", "wholesale price (cad)", "Wholesale Price", "wholesale price",
+        "Line: Price", "line: price", "Cost price in CAD", "cost price in cad", "Landed Cost", "landed cost"
     ])
     detected_price_col = _find_col(sup.columns, [
         "Retail CAD", "Retail (CAD)", "CAD Retail", "RetailCAD", "retail cad",
-        "Retail Price (CAD)", "Cad MSRP", "MSRP", "msrp"
+        "Retail Price (CAD)", "Cad MSRP", "MSRP", "msrp",
+        "Line: Variant Price", "line: variant price", "Line: Price", "line: price"
     ])
 
     
@@ -1926,6 +1936,7 @@ def run_transform(
             "style_name", "STYLE_NAME",
             "Name", "name",
             "Display Name", "display name", "Online Display Name", "online display name",
+            "Line: Name", "line: name",
         ],
     )
 
@@ -1936,24 +1947,24 @@ def run_transform(
         if non_empty_ratio < 0.2:
             desc_col = desc_col_fallback
 
-    product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku"])
+    product_col = _first_existing_col(sup, ["Product", "Product Code", "SKU", "sku", "Line: SKU", "line: sku", "Line: Variant SKU", "line: variant sku", "Line: Variant ID", "line: variant id"])
     color_col = _first_existing_col(sup, ["Vendor Color", "vendor color", "Color", "color", "Colour", "colour", "Color Code", "color code", "colour code and name", "Colour Code and Name", "Color Code and Name", "STYLE COLOR NAME", "Style Color Name", "Style colour name", "Style Color", "Style Colour"])
-    size_col = _first_existing_col(sup, ["Size 1","Size1","Size", "size", "Vendor Size1", "vendor size1"])
-    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code"])
+    size_col = _first_existing_col(sup, ["Size 1","Size1","Size", "size", "Vendor Size1", "vendor size1", "Line: Variant Title", "line: variant title"])
+    upc_col = _first_existing_col(sup, ["UPC", "UPC Code", "UPC Code.", "UPC Code 1", "UPC Code1", "UPC1", "Variant Barcode", "Barcode", "bar code", "upc", "upc code", "Line: Variant Barcode", "line: variant barcode"])
     ean_col = _first_existing_col(sup, ["EAN", "EAN Code", "ean", "ean code"])
-    origin_col = _first_existing_col(sup, ["Country of origin", "Country of Origin", "Country Of Origin", "Country Code", "Origin", "Manufacturing Country", "Manufacturer Country", "COO", "country of origin", "country of origin ", "country code", "origin", "manufacturing country", "manufacturer country", "coo"])
-    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code", "commodity hs", "commodity hts", "Commodity HS", "Commodity HTS", "Customs Code", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "customs code", "custom tariff code (no dots)", "custom tariff code", "tariff code", "Harmonisation Code", "Harmonization Code"])
+    origin_col = _first_existing_col(sup, ["Country of origin", "Country of Origin", "Country Of Origin", "Country Code", "Origin", "Manufacturing Country", "Manufacturer Country", "COO", "country of origin", "country of origin ", "country code", "origin", "manufacturing country", "manufacturer country", "coo", "Line: Variant Country of Origin", "line: variant country of origin"])
+    hs_col = _first_existing_col(sup, ["HS Code", "HTS Code", "hs code", "hts code", "commodity hs", "commodity hts", "Commodity HS", "Commodity HTS", "Customs Code", "custome tarif code (no dots)", "custom tarif code (no dots)", "custom tarif code", "Custom tarif code (no dots)", "Custom tarif code", "customs code", "custom tariff code (no dots)", "custom tariff code", "tariff code", "Harmonisation Code", "Harmonization Code", "Line: Variant HS Code", "line: variant hs code"])
     extid_col = _first_existing_col(sup, ["External ID", "ExternalID"])
-    msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)"])
+    msrp_col = _first_existing_col(sup, ["Cad MSRP", "MSRP", "Retail Price (CAD)", "retail price (CAD)", "retail price (cad)", "Line: Variant Price", "line: variant price", "Line: Price", "line: price"])
     landed_col = _first_existing_col(sup, ["Landed", "landed", "Wholesale Price", "wholesale price", "Wholesale Price (CAD)", "wholesale price (cad)"])
-    grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight", "Item Weight"])
+    grams_col = _first_existing_col(sup, ["Grams", "Weight (g)", "Weight", "Item Weight", "Line: Variant Weight", "line: variant weight"])
     gender_col = _first_existing_col(sup, ["Gender", "gender", "Genre", "genre", "Sex", "sex", "Sexe", "sexe"])
 
 
     # -----------------------------------------------------
     # Gender inference: detect "-w-" / "- W -" / "-m-" / "- M -" in Name or SKU
     # -----------------------------------------------------
-    name_hint_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style", "Description", "Display Name", "Online Display Name"])
+    name_hint_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style", "Description", "Display Name", "Online Display Name", "Product Title", "Line: Name"])
     sku_hint_col = extid_col or product_col
     sku_gender_cols = []
     for _c in [
@@ -1962,6 +1973,8 @@ def run_transform(
         _first_existing_col(sup, ["SKU", "sku"]),
         _first_existing_col(sup, ["SKU 1", "sku 1"]),
         _first_existing_col(sup, ["SKU1", "sku1"]),
+        _first_existing_col(sup, ["Line: SKU", "line: sku"]),
+        _first_existing_col(sup, ["Line: Variant SKU", "line: variant sku"]),
     ]:
         if _c and _c not in sku_gender_cols:
             sku_gender_cols.append(_c)
@@ -2076,7 +2089,7 @@ def run_transform(
     # -----------------------------------------------------
     # Long description helper fields must be defined BEFORE _desc_handle is computed
     # -----------------------------------------------------
-    title_name_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style"])
+    title_name_col = _first_existing_col(sup, ["Style Name", "Name", "Product Name", "Title", "Style", "Product Title", "Line: Name"])
     sup["_title_name_raw"] = _series_str_clean(sup[title_name_col]).map(_norm) if title_name_col else ""
     sup["_desc_is_long"] = sup["_desc_source"].apply(lambda x: len(str(x)) > 200)
 
